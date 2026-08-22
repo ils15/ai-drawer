@@ -2,11 +2,13 @@
 
 import queue
 import threading
+import time
 import traceback
 from datetime import datetime
 
 import adsk.core
 
+from .. import settings
 from ..lib import fusionAddInUtils as futil
 
 # ── Module state ──────────────────────────────────────────────────────────
@@ -160,7 +162,74 @@ def dispatch_to_main_thread(call_data):
             "isError": True,
         }
 
-    return reply.get()
+    try:
+        return reply.get(timeout=settings.MCP_MAIN_THREAD_TIMEOUT)
+    except queue.Empty:
+        # The Fusion main thread never picked up the work item.  Without
+        # this timeout a stalled Fusion would hang the MCP client forever.
+        _try_remove(envelope)
+        log(
+            "Timed out waiting for the Fusion main thread "
+            f"({settings.MCP_MAIN_THREAD_TIMEOUT:.0f}s); aborting request",
+            adsk.core.LogLevels.ErrorLogLevel,
+        )
+        return {
+            "content": [
+                {
+                    "type": "text",
+                    "text": (
+                        "Error: Timeout: the Fusion main thread did not "
+                        f"respond within {settings.MCP_MAIN_THREAD_TIMEOUT:.0f}s. "
+                        "Fusion may be busy or unresponsive; the request was "
+                        "aborted instead of hanging the client."
+                    ),
+                }
+            ],
+            "isError": True,
+        }
+
+
+def wait_for_main_thread(poll_interval=1.0, shutdown=None):
+    """Block until the Fusion main thread services a work item.
+
+    Enqueues a lightweight ``__startup_ping__`` envelope and waits for it
+    to round-trip through the Custom Event dispatcher.  Used to defer
+    startup work until Fusion's event loop is actually pumping, which is
+    not yet the case while an auto-loaded add-in's ``run()`` executes
+    during Fusion's own cold start.
+
+    Only call from background threads: the main thread cannot service the
+    queue while blocked inside an add-in callback, so waiting here from
+    ``run()`` would deadlock.  Returns ``True`` once the main thread is
+    live, ``False`` if *shutdown* (a ``threading.Event``) is set before
+    that happens.
+    """
+    if threading.current_thread() is threading.main_thread():
+        return True
+
+    while shutdown is None or not shutdown.is_set():
+        reply = queue.Queue(maxsize=1)
+        envelope = {
+            "payload": {"params": {"name": "__startup_ping__"}},
+            "reply": reply,
+        }
+        _pending.put(envelope)
+
+        try:
+            get_app().fireCustomEvent(CALLBACK_EVENT_ID)
+        except Exception:
+            # The scheduler's keepalive ticks fire this event too, so a
+            # single failure here is not fatal.
+            pass
+
+        try:
+            reply.get(timeout=poll_interval)
+            _try_remove(envelope)
+            return True
+        except queue.Empty:
+            _try_remove(envelope)
+
+    return False
 
 
 # ── Internal helpers ─────────────────────────────────────────────────────
