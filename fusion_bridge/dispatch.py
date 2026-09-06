@@ -333,13 +333,26 @@ def wait_for_main_thread(poll_interval=1.0, shutdown=None):
             pass
 
         try:
-            reply.get(timeout=poll_interval)
-            _try_remove(envelope)
-            return True
+            result = reply.get(timeout=poll_interval)
         except queue.Empty:
             _try_remove(envelope)
+            continue
+        _try_remove(envelope)
+        if _is_ready_reply(result):
+            return True
+        # A reply that is not the expected ready answer means the ping was
+        # mishandled; keep waiting for a genuine main-thread round-trip.
 
     return False
+
+
+def _is_ready_reply(result):
+    return (
+        isinstance(result, dict)
+        and bool(result.get("content"))
+        and isinstance(result["content"][0], dict)
+        and result["content"][0].get("text") == "ready"
+    )
 
 
 # ── Internal helpers ─────────────────────────────────────────────────────
@@ -370,6 +383,24 @@ def _flush_pending():
 
             payload = envelope["payload"]
             reply = envelope["reply"]
+
+            # The readiness ping is answered here, before any tool routing,
+            # so it succeeds even while the tool handler is not installed
+            # (cold start, add-in not fully running).
+            ping_params = (
+                payload.get("params") if isinstance(payload, dict) else None
+            )
+            if (
+                isinstance(ping_params, dict)
+                and ping_params.get("name") == "__startup_ping__"
+            ):
+                with envelope["_lock"]:
+                    envelope["_state"] = "done"
+                _put_reply(
+                    reply, {"content": [{"type": "text", "text": "ready"}]}
+                )
+                processed += 1
+                continue
 
             with envelope["_lock"]:
                 if envelope["_state"] == "cancelled":

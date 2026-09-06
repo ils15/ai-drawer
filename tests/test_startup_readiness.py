@@ -15,6 +15,7 @@ is still starting up:
 
 import http.client
 import json
+import queue
 import socket
 import threading
 import time
@@ -52,12 +53,41 @@ class StartupPingTests(unittest.TestCase):
         self.assertFalse(result.get("isError", False))
         self.assertEqual(result["content"][0]["text"], "ready")
 
+    def test_startup_ping_handled_without_tool_handler(self):
+        original_cb = dispatch._callback_impl
+        original_futil_log = dispatch.futil.log
+        dispatch._callback_impl = None
+        logged = []
+        dispatch.futil.log = lambda message, *a, **kw: logged.append(message)
+        try:
+            reply = queue.Queue(maxsize=1)
+            envelope = dispatch._new_envelope(
+                {"params": {"name": "__startup_ping__"}}, reply
+            )
+            dispatch._pending.put(envelope)
+            dispatch._flush_pending()
+            result = reply.get_nowait()
+        finally:
+            dispatch._callback_impl = original_cb
+            dispatch.futil.log = original_futil_log
+
+        self.assertEqual(result["content"][0]["text"], "ready")
+        self.assertFalse(result.get("isError", False))
+        self.assertEqual(envelope["_state"], "done")
+        self.assertFalse(
+            any("not initialized" in str(entry) for entry in logged),
+            f"ping must not depend on the tool handler: {logged}",
+        )
+
     def test_wait_for_main_thread_short_circuits_on_main_thread(self):
         self.assertTrue(dispatch.wait_for_main_thread())
 
     def test_wait_for_main_thread_round_trips_from_background(self):
         ready = threading.Event()
         result = []
+        original_futil_log = dispatch.futil.log
+        logged = []
+        dispatch.futil.log = lambda message, *a, **kw: logged.append(message)
 
         def worker():
             result.append(
@@ -77,10 +107,15 @@ class StartupPingTests(unittest.TestCase):
             dispatch._flush_pending()
             time.sleep(0.02)
         worker_thread.join(timeout=5)
+        dispatch.futil.log = original_futil_log
 
         self.assertFalse(worker_thread.is_alive())
         self.assertTrue(ready.is_set())
         self.assertEqual(result, [True])
+        self.assertFalse(
+            any("not initialized" in str(entry) for entry in logged),
+            f"readiness round-trip must not log tool-routing errors: {logged}",
+        )
 
     def test_wait_for_main_thread_exits_on_shutdown(self):
         shutdown = threading.Event()
