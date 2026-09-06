@@ -456,6 +456,8 @@ class MCPServer:
                 # (Responses have "id" + "result"/"error" but no "method")
                 # Both get 202 if there are no requests to respond to.
 
+                self._process_notifications(notifications)
+
                 if not requests:
                     self.send_response(202)
                     self.end_headers()
@@ -470,6 +472,36 @@ class MCPServer:
                     self._handle_streaming_response(requests, notifications, session_id)
                 else:
                     self._handle_json_response(requests, session_id)
+
+            # ----------------------------------------------------------
+            # Notifications
+            # ----------------------------------------------------------
+
+            def _process_notifications(self, notifications):
+                """Handle client notifications that need server action.
+
+                Only ``notifications/cancelled`` matters here: it asks the
+                server to cancel a previously issued request.  The
+                cancellation itself needs no JSON-RPC response, but it does
+                wake the SSE thread blocked on that tools/call, which then
+                delivers the cancel result through the original stream.
+                """
+                for msg in notifications:
+                    if msg.get("method") != "notifications/cancelled":
+                        continue
+                    params = msg.get("params") or {}
+                    request_id = params.get("requestId")
+                    if request_id is None:
+                        continue
+                    if server_ref.cancel_request(request_id):
+                        server_ref.log(
+                            f"Cancelled queued request {request_id}"
+                        )
+                    else:
+                        server_ref.log(
+                            f"Cannot cancel request {request_id}: already "
+                            "executing or unknown"
+                        )
 
             # ----------------------------------------------------------
             # JSON response path (fast calls)
@@ -490,7 +522,9 @@ class MCPServer:
 
                     server_ref.log(f"JSON: {method} (id={request_id})")
 
-                    result, is_error = self._dispatch_method(method, params)
+                    result, is_error = self._dispatch_method(
+                        method, params, request_id=request_id
+                    )
 
                     response = {"jsonrpc": "2.0", "id": request_id}
                     if is_error:
@@ -547,7 +581,9 @@ class MCPServer:
 
                         server_ref.log(f"SSE: {method} (id={request_id})")
 
-                        result, is_error = self._dispatch_method(method, params)
+                        result, is_error = self._dispatch_method(
+                            method, params, request_id=request_id
+                        )
 
                         response = {"jsonrpc": "2.0", "id": request_id}
                         if is_error:
@@ -565,7 +601,7 @@ class MCPServer:
             # Method dispatch (shared by JSON and SSE paths)
             # ----------------------------------------------------------
 
-            def _dispatch_method(self, method, params):
+            def _dispatch_method(self, method, params, request_id=None):
                 """
                 Dispatch a JSON-RPC method to the appropriate handler.
 
@@ -578,7 +614,10 @@ class MCPServer:
                     elif method == "tools/list":
                         return self._handle_tools_list(params), False
                     elif method == "tools/call":
-                        return self._handle_tools_call(params), False
+                        return (
+                            self._handle_tools_call(params, request_id),
+                            False,
+                        )
                     elif method == "resources/list":
                         return self._handle_resources_list(params), False
                     elif method == "resources/read":
@@ -625,7 +664,7 @@ class MCPServer:
                 """Handle tools/list request."""
                 return {"tools": server_ref.tools}
 
-            def _handle_tools_call(self, params):
+            def _handle_tools_call(self, params, request_id=None):
                 """Handle tools/call request - dispatch to tool handler."""
                 tool_name = params.get("name", "")
                 arguments = params.get("arguments", {})
@@ -644,6 +683,10 @@ class MCPServer:
 
                 # Convert to the format the existing handler expects
                 call_data = {"params": {"name": tool_name, "arguments": arguments}}
+                if request_id is not None:
+                    # Lets the dispatcher honour notifications/cancelled for
+                    # this call while it is still queued.
+                    call_data["request_id"] = request_id
                 return handler(call_data)
 
             def _handle_resources_list(self, params):
@@ -735,6 +778,33 @@ class MCPServer:
         """Server loop that respects is_running flag."""
         while self.is_running:
             self.httpd.handle_request()
+
+    def cancel_request(self, request_id):
+        """Forward an MCP cancellation to the Fusion main-thread dispatcher.
+
+        Returns True when the request was still queued and got cancelled.
+        Returns False when the dispatcher is unavailable, the request is
+        unknown, or its tool already runs on the Fusion main thread (which
+        cannot be aborted).
+        """
+        try:
+            dispatch = self._dispatch_module()
+        except Exception as exc:
+            self.log(f"Cannot cancel request {request_id}: {exc}")
+            return False
+        try:
+            return dispatch.cancel_request(request_id)
+        except Exception as exc:
+            self.log(f"Error cancelling request {request_id}: {exc}")
+            return False
+
+    @staticmethod
+    def _dispatch_module():
+        try:
+            from ..fusion_bridge import dispatch
+        except ImportError:
+            from fusion_bridge import dispatch
+        return dispatch
 
     def stop(self):
         """Stop the MCP server."""

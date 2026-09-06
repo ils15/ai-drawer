@@ -125,10 +125,90 @@ def _fire_event_if_needed():
 
 # ── Public dispatch API ──────────────────────────────────────────────────
 
+# Envelope lifecycle: queued -> running -> done, or queued -> cancelled.
+# Each envelope carries its own ``_lock`` so the submitting thread (on
+# timeout) and the Fusion main thread (in _flush_pending) transition the
+# state atomically.  Lock ordering: ``_lock`` -> queue mutex only; the
+# _inflight lock is never held while taking ``_lock``.
+
+_QUEUED_CANCEL_TEXT = (
+    "Error: Request cancelled: the tool was queued but never executed "
+    "(Fusion main thread did not service it). Safe to retry."
+)
+_RUNNING_TIMEOUT_TEXT = (
+    "Error: Timeout: the tool is still executing on the Fusion main thread "
+    "and may complete. Do NOT blindly retry — retrying could duplicate "
+    "the operation."
+)
+
+# request_id -> envelope, for requests that may still be cancellable.
+_inflight = {}
+_inflight_lock = threading.Lock()
+
+
+def _text_result(text):
+    return {
+        "content": [{"type": "text", "text": text}],
+        "isError": True,
+    }
+
+
+def _new_envelope(call_data, reply):
+    return {
+        "payload": call_data,
+        "reply": reply,
+        "_lock": threading.Lock(),
+        "_state": "queued",
+    }
+
+
+def _put_reply(reply, result):
+    try:
+        reply.put_nowait(result)
+    except queue.Full:
+        pass
+
+
+def _deregister_inflight(envelope):
+    request_id = envelope.get("_request_id")
+    if request_id is None:
+        return
+    with _inflight_lock:
+        if _inflight.get(request_id) is envelope:
+            del _inflight[request_id]
+
 
 def set_tool_handler(handler):
     global _callback_impl
     _callback_impl = handler
+
+
+def cancel_request(request_id):
+    """Cancel a queued request before the Fusion main thread executes it.
+
+    Returns ``True`` when the request was still queued and has been
+    cancelled; ``False`` when it is unknown, already executing, or already
+    finished.  Fusion work that is underway cannot be aborted, so a
+    ``False`` return means the caller must treat the operation as possibly
+    completing anyway.
+    """
+    with _inflight_lock:
+        envelope = _inflight.get(request_id)
+    if envelope is None:
+        return False
+
+    with envelope["_lock"]:
+        if envelope["_state"] != "queued":
+            return False
+        if not _try_remove(envelope):
+            # Lost the race with _flush_pending: the work is executing.
+            return False
+        envelope["_state"] = "cancelled"
+
+    _deregister_inflight(envelope)
+    # Wake the thread blocked in dispatch_to_main_thread with the answer.
+    _put_reply(envelope["reply"], _text_result(_QUEUED_CANCEL_TEXT))
+    return True
 
 
 def dispatch_to_main_thread(call_data):
@@ -141,52 +221,83 @@ def dispatch_to_main_thread(call_data):
         return _callback_impl(call_data)
 
     reply = queue.Queue(maxsize=1)
-    envelope = {"payload": call_data, "reply": reply}
+    envelope = _new_envelope(call_data, reply)
+
+    request_id = (
+        call_data.get("request_id") if isinstance(call_data, dict) else None
+    )
+    if request_id is not None:
+        envelope["_request_id"] = request_id
+        with _inflight_lock:
+            _inflight[request_id] = envelope
+
     _pending.put(envelope)
 
     try:
         get_app().fireCustomEvent(CALLBACK_EVENT_ID)
     except Exception as exc:
-        _try_remove(envelope)
+        with envelope["_lock"]:
+            if envelope["_state"] == "queued" and _try_remove(envelope):
+                envelope["_state"] = "cancelled"
+        _deregister_inflight(envelope)
         log(
             f"Failed to fire main-thread event: {exc}",
             adsk.core.LogLevels.ErrorLogLevel,
         )
-        return {
-            "content": [
-                {
-                    "type": "text",
-                    "text": f"Error: RuntimeError: failed to schedule Fusion main-thread work ({exc})",
-                }
-            ],
-            "isError": True,
-        }
+        return _text_result(
+            f"Error: RuntimeError: failed to schedule Fusion main-thread "
+            f"work ({exc})"
+        )
 
     try:
         return reply.get(timeout=settings.MCP_MAIN_THREAD_TIMEOUT)
     except queue.Empty:
-        # The Fusion main thread never picked up the work item.  Without
-        # this timeout a stalled Fusion would hang the MCP client forever.
-        _try_remove(envelope)
+        result, cancelled = _classify_timeout(envelope)
+        if cancelled:
+            _deregister_inflight(envelope)
         log(
             "Timed out waiting for the Fusion main thread "
-            f"({settings.MCP_MAIN_THREAD_TIMEOUT:.0f}s); aborting request",
+            f"({settings.MCP_MAIN_THREAD_TIMEOUT:.0f}s); "
+            + (
+                "request cancelled before execution"
+                if cancelled
+                else "request may still be executing"
+            ),
             adsk.core.LogLevels.ErrorLogLevel,
         )
-        return {
-            "content": [
-                {
-                    "type": "text",
-                    "text": (
-                        "Error: Timeout: the Fusion main thread did not "
-                        f"respond within {settings.MCP_MAIN_THREAD_TIMEOUT:.0f}s. "
-                        "Fusion may be busy or unresponsive; the request was "
-                        "aborted instead of hanging the client."
-                    ),
-                }
-            ],
-            "isError": True,
-        }
+        return result
+
+
+def _classify_timeout(envelope):
+    """Build the client-facing answer for a timed-out request.
+
+    Distinguishes work that was still queued (cancelled for real, safe to
+    retry) from work already executing on the Fusion main thread (cannot
+    be aborted; the client is told it may still complete and must not
+    blindly retry).
+    """
+    with envelope["_lock"]:
+        if envelope["_state"] == "queued":
+            if _try_remove(envelope):
+                envelope["_state"] = "cancelled"
+                return _text_result(_QUEUED_CANCEL_TEXT), True
+            # Raced with _flush_pending: it already dequeued the envelope
+            # and is waiting on this lock, so the work is executing.
+            envelope["_state"] = "running"
+
+        state = envelope["_state"]
+        if state == "done":
+            try:
+                return envelope["reply"].get_nowait(), False
+            except queue.Empty:
+                state = "running"
+        if state == "cancelled":
+            # A concurrent cancel_request() already produced the answer.
+            try:
+                return envelope["reply"].get_nowait(), False
+            except queue.Empty:
+                return _text_result(_QUEUED_CANCEL_TEXT), True
+        return _text_result(_RUNNING_TIMEOUT_TEXT), False
 
 
 def wait_for_main_thread(poll_interval=1.0, shutdown=None):
@@ -209,10 +320,9 @@ def wait_for_main_thread(poll_interval=1.0, shutdown=None):
 
     while shutdown is None or not shutdown.is_set():
         reply = queue.Queue(maxsize=1)
-        envelope = {
-            "payload": {"params": {"name": "__startup_ping__"}},
-            "reply": reply,
-        }
+        envelope = _new_envelope(
+            {"params": {"name": "__startup_ping__"}}, reply
+        )
         _pending.put(envelope)
 
         try:
@@ -260,6 +370,21 @@ def _flush_pending():
 
             payload = envelope["payload"]
             reply = envelope["reply"]
+
+            with envelope["_lock"]:
+                if envelope["_state"] == "cancelled":
+                    envelope["_state"] = "done"
+                    cancelled = True
+                else:
+                    envelope["_state"] = "running"
+                    cancelled = False
+
+            if cancelled:
+                _deregister_inflight(envelope)
+                _put_reply(reply, _text_result(_QUEUED_CANCEL_TEXT))
+                processed += 1
+                continue
+
             try:
                 if _callback_impl is None:
                     raise RuntimeError("Tool implementation is not initialized")
@@ -285,7 +410,10 @@ def _flush_pending():
                     "isError": True,
                 }
 
-            reply.put(result)
+            with envelope["_lock"]:
+                envelope["_state"] = "done"
+            _deregister_inflight(envelope)
+            _put_reply(reply, result)
             processed += 1
 
         drain_logs()
