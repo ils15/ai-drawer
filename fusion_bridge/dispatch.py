@@ -133,6 +133,9 @@ def dispatch_to_main_thread(call_data):
     """Submit *call_data* for execution on the Fusion main thread and block
     until the result is available.  If already on the main thread, execute
     directly."""
+    cancelled = call_data.get("_cancel_event")
+    if cancelled is not None and (cancelled.is_set() or _halt.is_set()):
+        return _cancelled_result()
     if threading.current_thread() is threading.main_thread():
         if _callback_impl is None:
             raise RuntimeError("Tool implementation is not initialized")
@@ -160,10 +163,27 @@ def dispatch_to_main_thread(call_data):
             "isError": True,
         }
 
-    return reply.get()
+    if cancelled is None:
+        return reply.get()  # Legacy lifecycle is handled separately.
+    while True:
+        if cancelled.is_set() or _halt.is_set():
+            cancelled.set()
+            _try_remove(envelope)
+            return _cancelled_result()
+        try:
+            return reply.get(timeout=0.05)
+        except queue.Empty:
+            pass
 
 
 # ── Internal helpers ─────────────────────────────────────────────────────
+
+
+def _cancelled_result():
+    return {
+        "content": [{"type": "text", "text": "Request cancelled; work already started may still complete."}],
+        "isError": True,
+    }
 
 
 def _try_remove(envelope):
@@ -192,6 +212,11 @@ def _flush_pending():
             payload = envelope["payload"]
             reply = envelope["reply"]
             try:
+                cancelled = payload.get("_cancel_event")
+                if cancelled is not None and (cancelled.is_set() or _halt.is_set()):
+                    reply.put(_cancelled_result())
+                    processed += 1
+                    continue
                 if _callback_impl is None:
                     raise RuntimeError("Tool implementation is not initialized")
                 result = _callback_impl(payload)

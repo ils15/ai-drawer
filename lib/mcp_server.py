@@ -6,16 +6,16 @@ Author: Frank Hommers
 Created: 2026-01-23
 
 Standalone MCP server that runs inside the Autodesk Fusion add-in.
-Implements the MCP Streamable HTTP transport, negotiating any of the
+Implements stateless MCP 2026-07-28 and retains the initialization-based
 2025-11-25, 2025-06-18 and 2025-03-26 protocol revisions.
 
 MCP clients connect directly:
   {"mcpServers": {"autodesk-fusion-mcp": {"type": "http", "url": "http://localhost:8765/mcp"}}}
 
 Endpoints:
-  POST /mcp    - All client→server JSON-RPC messages (single or batch)
-  GET  /mcp    - Server→client SSE stream (server-initiated messages)
-  DELETE /mcp  - Session termination
+  POST /mcp    - JSON-RPC messages (batches accepted for legacy clients only)
+  GET  /mcp    - Legacy server→client SSE stream
+  DELETE /mcp  - Legacy session termination
   GET  /health - Health check (non-MCP)
 """
 
@@ -29,6 +29,15 @@ from socketserver import ThreadingMixIn
 from urllib.parse import urlparse
 from typing import Callable, Dict, Optional
 
+from .mcp_http_2026 import ModernHTTPMixin
+from .mcp_protocol import (
+    LEGACY_PROTOCOL_VERSIONS,
+    MODERN_PROTOCOL_VERSION,
+    SUPPORTED_PROTOCOL_VERSIONS,
+    reject_non_json_constant,
+    uses_modern_protocol,
+)
+
 
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     """HTTP server that handles each request in a new thread."""
@@ -36,23 +45,17 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
 
 
-# MCP protocol versions this server can speak, newest first.
-#
-# The transport and the tools/* surface are unchanged across these revisions,
-# so a single implementation satisfies all three.  Note that 2025-06-18 dropped
-# JSON-RPC batching; we still accept batches because being lenient costs
-# nothing and older clients rely on it.
-SUPPORTED_PROTOCOL_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26")
-
-# Version we advertise when a client asks for something we do not recognise.
+# Health/discovery advertise the newest version. Legacy initialize must never
+# select it: that client has already chosen the handshake-based protocol.
 MCP_PROTOCOL_VERSION = SUPPORTED_PROTOCOL_VERSIONS[0]
+LEGACY_PROTOCOL_VERSION = LEGACY_PROTOCOL_VERSIONS[0]
 
 # Version to assume when a client omits the MCP-Protocol-Version header on
 # requests after initialize, per the 2025-06-18 backwards-compatibility rule.
 DEFAULT_PROTOCOL_VERSION = "2025-03-26"
 
 # Server info
-SERVER_INFO = {"name": "autodesk-fusion-mcp", "version": "1.3.0"}
+SERVER_INFO = {"name": "autodesk-fusion-mcp", "version": "1.4.0"}
 
 # Server capabilities
 SERVER_CAPABILITIES = {"tools": {}, "resources": {}}
@@ -67,9 +70,9 @@ def negotiate_protocol_version(requested):
     disconnect.  Previously this server always answered "2025-03-26", which
     made stricter clients drop the connection.
     """
-    if requested in SUPPORTED_PROTOCOL_VERSIONS:
+    if requested in LEGACY_PROTOCOL_VERSIONS:
         return requested
-    return MCP_PROTOCOL_VERSION
+    return LEGACY_PROTOCOL_VERSION
 
 
 class MCPServer:
@@ -94,6 +97,9 @@ class MCPServer:
         log_callback: Callable = None,
         tools: list = None,
         tool_handlers: dict = None,
+        allowed_origins=None,
+        max_tool_requests: int = 16,
+        tool_timeout: float = 120.0,
     ):
         self.port = port
         # Keep legacy single-tool attributes for backwards compat
@@ -139,7 +145,7 @@ class MCPServer:
                 },
                 "session_id": {
                     "type": "string",
-                    "description": "Python session ID for persistent variables",
+                    "description": "Explicit Python session ID for persistent variables; required for persistent execution on MCP 2026-07-28",
                 },
                 "persistent": {
                     "type": "boolean",
@@ -180,6 +186,11 @@ class MCPServer:
             },
         }
         self.log_callback = log_callback
+        self.server_info = SERVER_INFO
+        self.allowed_origins = set(allowed_origins or ())
+        self._tool_slots = threading.BoundedSemaphore(max_tool_requests)
+        self.tool_timeout = tool_timeout
+        self._stop_event = threading.Event()
 
         # Multi-tool support: if explicit tools/tool_handlers provided, use them.
         # Otherwise, build from legacy single-tool parameters.
@@ -219,11 +230,13 @@ class MCPServer:
             return
 
         server_ref = self
+        self._stop_event.clear()
 
-        class MCPRequestHandler(BaseHTTPRequestHandler):
+        class MCPRequestHandler(ModernHTTPMixin, BaseHTTPRequestHandler):
             """HTTP request handler for MCP Streamable HTTP transport."""
 
             protocol_version = "HTTP/1.1"
+            mcp_server = server_ref
 
             def log_message(self, format, *args):
                 """Suppress default HTTP logging."""
@@ -235,9 +248,14 @@ class MCPServer:
 
             def do_GET(self):
                 """Handle GET requests."""
+                if not self._validate_origin():
+                    return
                 parsed = urlparse(self.path)
                 if parsed.path == "/mcp":
-                    self._handle_mcp_get()
+                    if self.headers.get("MCP-Protocol-Version") == MODERN_PROTOCOL_VERSION:
+                        self._send_empty(405, allow="POST")
+                    else:
+                        self._handle_mcp_get()
                 elif parsed.path == "/health":
                     self._handle_health()
                 else:
@@ -247,18 +265,25 @@ class MCPServer:
 
             def do_POST(self):
                 """Handle POST requests."""
+                if not self._validate_origin():
+                    return
                 parsed = urlparse(self.path)
                 if parsed.path == "/mcp":
                     self._handle_mcp_post()
                 else:
-                    self.send_response(404)
-                    self.send_header("Content-Length", "0")
-                    self.end_headers()
+                    # The body was not consumed, so do not interpret it as
+                    # the next request on a keep-alive connection.
+                    self._send_empty(404, close=True)
 
             def do_DELETE(self):
                 """Handle DELETE requests (session termination)."""
+                if not self._validate_origin():
+                    return
                 parsed = urlparse(self.path)
                 if parsed.path == "/mcp":
+                    if self.headers.get("MCP-Protocol-Version") == MODERN_PROTOCOL_VERSION:
+                        self._send_empty(405, allow="POST")
+                        return
                     session_id = self.headers.get("Mcp-Session-Id")
                     if session_id:
                         with server_ref.sessions_lock:
@@ -304,9 +329,7 @@ class MCPServer:
                 # Validate Accept header
                 accept = self.headers.get("Accept", "")
                 if "text/event-stream" not in accept:
-                    self.send_response(406)
-                    self.send_header("Content-Length", "0")
-                    self.end_headers()
+                    self._send_empty(406, close=True)
                     return
 
                 # Validate session if provided
@@ -332,11 +355,13 @@ class MCPServer:
                         try:
                             self.wfile.write(b": keepalive\n\n")
                             self.wfile.flush()
-                            time.sleep(15)
+                            if server_ref._stop_event.wait(15):
+                                break
                         except (BrokenPipeError, ConnectionResetError):
                             break
                 except (BrokenPipeError, ConnectionResetError, OSError):
                     pass
+                self.close_connection = True
 
             # ----------------------------------------------------------
             # Request body reading (Content-Length and chunked)
@@ -383,38 +408,28 @@ class MCPServer:
                     and "text/event-stream" not in accept
                     and "*/*" not in accept
                 ):
-                    self.send_response(406)
-                    self.send_header("Content-Length", "0")
-                    self.end_headers()
+                    self._send_empty(406, close=True)
                     return
-
-                # Clients on 2025-06-18 and later echo the negotiated version
-                # on every follow-up request; its absence implies 2025-03-26.
-                # A mismatch is logged rather than rejected with 400, so a
-                # client running ahead of this server still gets served.
-                header_version = self.headers.get(
-                    "MCP-Protocol-Version", DEFAULT_PROTOCOL_VERSION
-                )
-                if header_version not in SUPPORTED_PROTOCOL_VERSIONS:
-                    server_ref.log(
-                        f"Unsupported MCP-Protocol-Version header "
-                        f"{header_version}, continuing anyway"
-                    )
 
                 # Read request body (supports both Content-Length and chunked transfer encoding)
                 body = self._read_request_body()
 
                 try:
-                    payload = json.loads(body.decode("utf-8"))
-                except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                    payload = json.loads(body.decode("utf-8"), parse_constant=reject_non_json_constant)
+                except (ValueError, RecursionError) as e:
+                    error = {
+                        "jsonrpc": "2.0",
+                        "error": {"code": -32700, "message": f"Parse error: {e}"},
+                    }
+                    if not uses_modern_protocol(None, self.headers):
+                        error["id"] = None
                     self._send_json_response(
-                        400,
-                        {
-                            "jsonrpc": "2.0",
-                            "id": None,
-                            "error": {"code": -32700, "message": f"Parse error: {e}"},
-                        },
+                        400, error,
                     )
+                    return
+
+                if uses_modern_protocol(payload, self.headers):
+                    self._handle_modern_request(payload)
                     return
 
                 # Determine if this is a batch or single message
@@ -430,6 +445,13 @@ class MCPServer:
                             "error": {"code": -32600, "message": "Empty batch"},
                         },
                     )
+                    return
+
+                if any(not isinstance(msg, dict) for msg in messages):
+                    self._send_json_response(400, {
+                        "jsonrpc": "2.0", "id": None,
+                        "error": {"code": -32600, "message": "Invalid JSON-RPC message"},
+                    })
                     return
 
                 # Validate session for non-initialize requests
@@ -541,11 +563,7 @@ class MCPServer:
                 Used for tools/call which may be long-running.
                 Each JSON-RPC response is sent as an SSE 'message' event.
                 """
-                self.send_response(200)
-                self.send_header("Content-Type", "text/event-stream")
-                self.send_header("Cache-Control", "no-cache")
-                self.send_header("Connection", "keep-alive")
-                self.end_headers()
+                self._start_sse()
 
                 try:
                     for req in requests:
@@ -565,9 +583,11 @@ class MCPServer:
 
                         # Send as SSE event
                         self._write_sse_event(json.dumps(response), event="message")
+                    self._end_sse()
 
                 except (BrokenPipeError, ConnectionResetError, OSError):
                     server_ref.log("Client disconnected during SSE stream")
+                    self.close_connection = True
 
             # ----------------------------------------------------------
             # Method dispatch (shared by JSON and SSE paths)
@@ -701,9 +721,14 @@ class MCPServer:
 
             def _write_sse_event(self, data, event=None):
                 """Write an SSE event to the response stream."""
+                message = ""
                 if event:
-                    self.wfile.write(f"event: {event}\n".encode("utf-8"))
-                self.wfile.write(f"data: {data}\n\n".encode("utf-8"))
+                    message += f"event: {event}\n"
+                encoded = (message + f"data: {data}\n\n").encode("utf-8")
+                if getattr(self, "_chunked_sse", False):
+                    self.wfile.write(f"{len(encoded):X}\r\n".encode("ascii") + encoded + b"\r\n")
+                else:
+                    self.wfile.write(encoded)
                 self.wfile.flush()
 
         # ----------------------------------------------------------
@@ -724,6 +749,9 @@ class MCPServer:
             self.server_thread.start()
 
             self.log(f"MCP Server started on http://127.0.0.1:{self.port}")
+            self.log(f"  Add-in: {SERVER_INFO['name']} v{SERVER_INFO['version']}")
+            self.log(f"  MCP transport: {MODERN_PROTOCOL_VERSION} (stateless requests)")
+            self.log(f"  MCP legacy: {', '.join(LEGACY_PROTOCOL_VERSIONS)} (initialize handshake)")
             self.log(f"  Streamable HTTP: http://127.0.0.1:{self.port}/mcp")
             self.log(f"  Health check:    http://127.0.0.1:{self.port}/health")
             self.log(f"Add to MCP client config:")
@@ -750,6 +778,7 @@ class MCPServer:
             return
 
         self.log("Stopping MCP server...")
+        self._stop_event.set()
         self.is_running = False
 
         # Close the HTTP server socket

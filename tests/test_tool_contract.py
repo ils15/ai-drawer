@@ -17,6 +17,8 @@ class ToolSurfaceTests(unittest.TestCase):
         "call_autodesk_api",
         "execute_python",
         "capture_viewport",
+        "get_viewport",
+        "set_viewport",
         "fetch_api_documentation",
         "fetch_online_documentation",
         "fetch_design_guide",
