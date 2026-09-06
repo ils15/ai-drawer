@@ -1,0 +1,250 @@
+"""Tests for the real MCP server startup/shutdown lifecycle.
+
+Covers the reviewer's requested lifecycle cases:
+
+a) no port binding before Fusion's main thread is ready,
+b) a working ``/health`` endpoint once startup completed,
+c) stopping the add-in while startup is still waiting for readiness,
+d) stopping a running server and restarting it.
+
+The Fusion main thread is simulated by a pump thread that services
+``dispatch._flush_pending()`` exactly like the Custom Event handler
+would, so the tests exercise the genuine readiness round-trip.
+"""
+
+import _fusion_test_bootstrap  # noqa: F401  (installs adsk mock + parent pkg shim)
+
+import http.client
+import json
+import queue
+import socket
+import threading
+import time
+import unittest
+from unittest import mock
+
+import settings
+from fusion_bridge import dispatch, runtime
+from lib import mcp_server as mcp_server_module
+
+
+def _free_port():
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def _port_accepts(port, timeout=0.5):
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _drain_pending():
+    while not dispatch._pending.empty():
+        dispatch._pending.get_nowait()
+
+
+def _wait_until(predicate, timeout=15.0, interval=0.05):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(interval)
+    return predicate()
+
+
+def _health(port, timeout=5.0):
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
+    try:
+        conn.request("GET", "/health")
+        response = conn.getresponse()
+        return response.status, json.loads(response.read().decode("utf-8"))
+    finally:
+        conn.close()
+
+
+def _wait_for_health(port, timeout=15.0):
+    deadline = time.monotonic() + timeout
+    last_error = None
+    while time.monotonic() < deadline:
+        try:
+            return _health(port)
+        except OSError as exc:
+            last_error = exc
+            time.sleep(0.05)
+    raise AssertionError(f"/health never came up on port {port}: {last_error}")
+
+
+class _MainThreadPump:
+    """Stands in for the Fusion main thread by servicing the work queue."""
+
+    def __init__(self):
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def _run(self):
+        while not self._stop.is_set():
+            dispatch._flush_pending()
+            self._stop.wait(0.02)
+
+    def start(self):
+        self._thread.start()
+
+    def stop(self):
+        self._stop.set()
+        self._thread.join(timeout=5)
+
+
+class ServerLifecycleTests(unittest.TestCase):
+    def setUp(self):
+        self._original = {
+            "port": settings.MCP_SERVER_PORT,
+            "auto_connect": settings.MCP_AUTO_CONNECT,
+            "callback": dispatch._callback_impl,
+            "server": runtime._server,
+        }
+        settings.MCP_SERVER_PORT = _free_port()
+        settings.MCP_AUTO_CONNECT = True
+        runtime._server = None
+
+        self._patches = [
+            mock.patch.object(
+                runtime.python_exec,
+                "get_version_info",
+                lambda *a, **kw: "test-version (lifecycle)",
+            ),
+            mock.patch.object(runtime, "log", lambda message, *a, **kw: None),
+            mock.patch.object(
+                dispatch.futil, "log", lambda message, *a, **kw: None
+            ),
+        ]
+        for patcher in self._patches:
+            patcher.start()
+
+        dispatch._halt.clear()
+        dispatch._scheduler_active.clear()
+        self._pump = None
+
+    def tearDown(self):
+        if self._pump is not None:
+            self._pump.stop()
+        runtime.stop()
+        dispatch._halt.clear()
+        dispatch._scheduler_active.clear()
+        dispatch._registered = False
+        dispatch._callback_event = None
+        dispatch._callback_impl = self._original["callback"]
+        _drain_pending()
+        with dispatch._inflight_lock:
+            dispatch._inflight.clear()
+        runtime._server = self._original["server"]
+        settings.MCP_SERVER_PORT = self._original["port"]
+        settings.MCP_AUTO_CONNECT = self._original["auto_connect"]
+        for patcher in self._patches:
+            patcher.stop()
+
+    def _spy_server_start(self):
+        calls = []
+        original_start = mcp_server_module.MCPServer.start
+
+        def spy(server_self):
+            calls.append(server_self.port)
+            return original_start(server_self)
+
+        patcher = mock.patch.object(mcp_server_module.MCPServer, "start", spy)
+        patcher.start()
+        self._patches.append(patcher)
+        return calls
+
+    def _start_pump(self):
+        self._pump = _MainThreadPump()
+        self._pump.start()
+
+    def _start_worker(self):
+        worker = threading.Thread(
+            target=runtime._server_start_worker, daemon=True
+        )
+        worker.start()
+        return worker
+
+    def test_a_no_binding_before_readiness(self):
+        start_calls = self._spy_server_start()
+        worker = self._start_worker()
+
+        # Longer than wait_for_main_thread's 1s poll interval: the worker
+        # is parked waiting for readiness, and must not have bound anything.
+        time.sleep(1.5)
+        self.assertIsNone(runtime._server)
+        self.assertEqual(start_calls, [])
+        self.assertFalse(
+            _port_accepts(settings.MCP_SERVER_PORT),
+            "the MCP port must not accept connections before readiness",
+        )
+
+        self._start_pump()
+        self.assertTrue(_wait_until(lambda: runtime._server is not None))
+        worker.join(timeout=15)
+        self.assertFalse(worker.is_alive())
+        self.assertTrue(runtime._server.is_running)
+        self.assertEqual(start_calls, [settings.MCP_SERVER_PORT])
+
+    def test_b_health_endpoint_after_readiness(self):
+        worker = self._start_worker()
+        self._start_pump()
+        self.assertTrue(_wait_until(lambda: runtime._server is not None))
+        worker.join(timeout=15)
+
+        status, body = _wait_for_health(settings.MCP_SERVER_PORT)
+        self.assertEqual(status, 200)
+        self.assertEqual(body["status"], "ok")
+        self.assertIsInstance(body["uptime_seconds"], int)
+
+    def test_c_stop_while_waiting_for_readiness(self):
+        start_calls = self._spy_server_start()
+        worker = self._start_worker()
+        time.sleep(1.2)
+        self.assertIsNone(runtime._server)
+
+        runtime.stop()
+        worker.join(timeout=10)
+
+        self.assertFalse(worker.is_alive())
+        self.assertIsNone(runtime._server)
+        self.assertEqual(start_calls, [])
+        self.assertFalse(
+            _port_accepts(settings.MCP_SERVER_PORT),
+            "nothing may listen after stopping before readiness",
+        )
+
+    def test_d_stop_then_restart(self):
+        self._start_pump()
+
+        self.assertTrue(runtime.start())
+        self.assertTrue(_wait_until(lambda: runtime._server is not None))
+        first_server = runtime._server
+        status, body = _wait_for_health(settings.MCP_SERVER_PORT)
+        self.assertEqual(status, 200)
+        self.assertEqual(body["status"], "ok")
+
+        runtime.stop()
+        self.assertFalse(first_server.is_running)
+        self.assertIsNone(runtime._server)
+        self.assertFalse(_port_accepts(settings.MCP_SERVER_PORT))
+
+        settings.MCP_SERVER_PORT = _free_port()
+        self.assertTrue(runtime.start())
+        self.assertTrue(_wait_until(lambda: runtime._server is not None))
+        self.assertIsNot(runtime._server, first_server)
+        status, body = _wait_for_health(settings.MCP_SERVER_PORT)
+        self.assertEqual(status, 200)
+        self.assertEqual(body["status"], "ok")
+
+        runtime.stop()
+        self.assertIsNone(runtime._server)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -34,6 +34,50 @@ _adsk_mock.fusion = types.ModuleType("adsk.fusion")
 #   ui  = app.userInterface
 # at module level, so get() must return an object with .userInterface and .log().
 _MockUI = type("UserInterface", (), {"messageBox": lambda self, msg: None})
+
+
+class _MockEvent:
+    def __init__(self, event_id):
+        self._event_id = event_id
+        self._handlers = []
+
+    def add(self, handler):
+        if handler not in self._handlers:
+            self._handlers.append(handler)
+        return True
+
+    def remove(self, handler):
+        if handler in self._handlers:
+            self._handlers.remove(handler)
+        return True
+
+    def notify_handlers(self, args=None):
+        for handler in list(self._handlers):
+            handler.notify(args)
+
+
+# Custom events live on the class so that every Application.get() instance
+# (a fresh object per call) observes the same registrations.
+_MOCK_APP_EVENTS = {}
+
+
+def _app_register_custom_event(self, event_id):
+    event = _MockEvent(event_id)
+    _MOCK_APP_EVENTS[event_id] = event
+    return event
+
+
+def _app_fire_custom_event(self, event_id):
+    event = _MOCK_APP_EVENTS.get(event_id)
+    if event is not None:
+        event.notify_handlers()
+    return True
+
+
+def _app_unregister_custom_event(self, event_id):
+    return _MOCK_APP_EVENTS.pop(event_id, None) is not None
+
+
 _MockApp = type(
     "Application",
     (),
@@ -41,6 +85,9 @@ _MockApp = type(
         "userInterface": _MockUI(),
         "log": lambda self, *a, **kw: None,
         "activeProduct": None,
+        "registerCustomEvent": _app_register_custom_event,
+        "fireCustomEvent": _app_fire_custom_event,
+        "unregisterCustomEvent": _app_unregister_custom_event,
     },
 )
 _adsk_mock.core.Application = type(
