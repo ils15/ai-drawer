@@ -141,6 +141,10 @@ _RUNNING_TIMEOUT_TEXT = (
     "the operation."
 )
 
+_CANCELLED_TEXT = (
+    "Error: Request cancelled; work that already started may still complete."
+)
+
 # request_id -> envelope, for requests that may still be cancellable.
 _inflight = {}
 _inflight_lock = threading.Lock()
@@ -215,6 +219,11 @@ def dispatch_to_main_thread(call_data):
     """Submit *call_data* for execution on the Fusion main thread and block
     until the result is available.  If already on the main thread, execute
     directly."""
+    cancel_event = (
+        call_data.get("_cancel_event") if isinstance(call_data, dict) else None
+    )
+    if cancel_event is not None and (cancel_event.is_set() or _halt.is_set()):
+        return _text_result(_CANCELLED_TEXT)
     if threading.current_thread() is threading.main_thread():
         if _callback_impl is None:
             raise RuntimeError("Tool implementation is not initialized")
@@ -249,23 +258,48 @@ def dispatch_to_main_thread(call_data):
             f"work ({exc})"
         )
 
-    try:
-        return reply.get(timeout=settings.MCP_MAIN_THREAD_TIMEOUT)
-    except queue.Empty:
-        result, cancelled = _classify_timeout(envelope)
-        if cancelled:
+    if cancel_event is None:
+        try:
+            return reply.get(timeout=settings.MCP_MAIN_THREAD_TIMEOUT)
+        except queue.Empty:
+            result, cancelled_flag = _classify_timeout(envelope)
+            if cancelled_flag:
+                _deregister_inflight(envelope)
+            log(
+                "Timed out waiting for the Fusion main thread "
+                f"({settings.MCP_MAIN_THREAD_TIMEOUT:.0f}s); "
+                + (
+                    "request cancelled before execution"
+                    if cancelled_flag
+                    else "request may still be executing"
+                ),
+                adsk.core.LogLevels.ErrorLogLevel,
+            )
+            return result
+
+    # Upstream v1.4.0 passes a `_cancel_event` (mcp_http_2026.py) so the
+    # protocol layer can cancel / time-out a tool while the dispatch still
+    # owns the envelope; respond to it here, then fall back to the settings
+    # timeout as a safety net.
+    deadline = time.monotonic() + settings.MCP_MAIN_THREAD_TIMEOUT
+    while True:
+        if cancel_event.is_set() or _halt.is_set():
+            cancel_event.set()
+            with envelope["_lock"]:
+                if envelope["_state"] == "queued":
+                    _try_remove(envelope)
+                envelope["_state"] = "cancelled"
             _deregister_inflight(envelope)
-        log(
-            "Timed out waiting for the Fusion main thread "
-            f"({settings.MCP_MAIN_THREAD_TIMEOUT:.0f}s); "
-            + (
-                "request cancelled before execution"
-                if cancelled
-                else "request may still be executing"
-            ),
-            adsk.core.LogLevels.ErrorLogLevel,
-        )
-        return result
+            return _text_result(_CANCELLED_TEXT)
+        try:
+            return reply.get(timeout=0.05)
+        except queue.Empty:
+            pass
+        if time.monotonic() >= deadline:
+            result, cancelled_flag = _classify_timeout(envelope)
+            if cancelled_flag:
+                _deregister_inflight(envelope)
+            return result
 
 
 def _classify_timeout(envelope):
@@ -399,6 +433,20 @@ def _flush_pending():
                 _put_reply(
                     reply, {"content": [{"type": "text", "text": "ready"}]}
                 )
+                processed += 1
+                continue
+
+            # Honour the upstream v1.4.0 `_cancel_event` so a queued request
+            # that was cancelled / timed out by the protocol layer is never
+            # executed.
+            cancel_ev = (
+                payload.get("_cancel_event") if isinstance(payload, dict) else None
+            )
+            if cancel_ev is not None and (cancel_ev.is_set() or _halt.is_set()):
+                with envelope["_lock"]:
+                    envelope["_state"] = "done"
+                _deregister_inflight(envelope)
+                _put_reply(reply, _text_result(_CANCELLED_TEXT))
                 processed += 1
                 continue
 
