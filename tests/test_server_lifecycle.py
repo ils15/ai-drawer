@@ -124,7 +124,7 @@ class ServerLifecycleTests(unittest.TestCase):
         for patcher in self._patches:
             patcher.start()
 
-        dispatch._halt.clear()
+        dispatch._halt = threading.Event()
         dispatch._scheduler_active.clear()
         self._pump = None
 
@@ -132,7 +132,7 @@ class ServerLifecycleTests(unittest.TestCase):
         if self._pump is not None:
             self._pump.stop()
         runtime.stop()
-        dispatch._halt.clear()
+        dispatch._halt = threading.Event()
         dispatch._scheduler_active.clear()
         dispatch._registered = False
         dispatch._callback_event = None
@@ -244,6 +244,104 @@ class ServerLifecycleTests(unittest.TestCase):
 
         runtime.stop()
         self.assertIsNone(runtime._server)
+
+    def test_old_start_worker_cannot_bind_after_restart(self):
+        entered, release = threading.Event(), threading.Event()
+
+        def delayed_readiness(**kwargs):
+            entered.set()
+            release.wait(5)
+            return True
+
+        with mock.patch.object(runtime, "wait_for_main_thread", delayed_readiness), \
+                mock.patch.object(runtime, "_start_server") as start_server:
+            old_shutdown = dispatch.get_shutdown_flag()
+            worker = self._start_worker()
+            try:
+                self.assertTrue(entered.wait(2))
+                runtime.stop()
+                dispatch.init_main_thread_dispatch()
+                self.assertIsNot(old_shutdown, dispatch.get_shutdown_flag())
+                self.assertTrue(old_shutdown.is_set())
+            finally:
+                release.set()
+                worker.join(5)
+            self.assertFalse(worker.is_alive())
+            start_server.assert_not_called()
+
+    def test_queued_legacy_work_never_survives_stop_restart(self):
+        result = []
+        app = dispatch.get_app()
+        with mock.patch.object(dispatch, "get_app", return_value=app), \
+                mock.patch.object(app, "fireCustomEvent", return_value=True), \
+                mock.patch.object(dispatch, "_callback_impl") as tool:
+            worker = threading.Thread(target=lambda: result.append(
+                dispatch.dispatch_to_main_thread({"params": {"name": "echo"},
+                                                  "_request_key": "stop-test"})))
+            worker.start()
+            try:
+                self.assertTrue(_wait_until(lambda: not dispatch._pending.empty()))
+                runtime.stop()
+                dispatch.init_main_thread_dispatch()
+                dispatch._flush_pending()
+            finally:
+                worker.join(5)
+            self.assertFalse(worker.is_alive())
+            self.assertTrue(result[0]["isError"])
+            self.assertTrue(dispatch._pending.empty())
+            self.assertEqual(dispatch._inflight, {})
+            tool.assert_not_called()
+
+    def test_old_scheduler_tick_does_not_restart_timer_chain(self):
+        old_shutdown = dispatch.get_shutdown_flag()
+        runtime.stop()
+        dispatch.init_main_thread_dispatch()
+        with mock.patch.object(dispatch, "_fire_event_if_needed") as fire, \
+                mock.patch.object(dispatch.threading, "Timer") as timer:
+            dispatch._schedule_tick(old_shutdown)
+            fire.assert_not_called()
+            timer.assert_not_called()
+
+    def test_submission_racing_with_stop_cannot_execute_after_restart(self):
+        entered, release = threading.Event(), threading.Event()
+        original_put = dispatch._pending.put
+        result = []
+
+        def delayed_put(envelope):
+            entered.set()
+            release.wait(5)
+            original_put(envelope)
+
+        app = dispatch.get_app()
+        with mock.patch.object(dispatch, "get_app", return_value=app), \
+                mock.patch.object(app, "fireCustomEvent", side_effect=lambda _: dispatch._flush_pending()), \
+                mock.patch.object(dispatch, "_schedule_tick"), \
+                mock.patch.object(dispatch._pending, "put", delayed_put), \
+                mock.patch.object(dispatch, "_callback_impl") as tool:
+            worker = threading.Thread(target=lambda: result.append(
+                dispatch.dispatch_to_main_thread({"params": {"name": "echo"},
+                                                  "_request_key": "late-submit"})))
+            worker.start()
+            try:
+                self.assertTrue(entered.wait(2))
+                runtime.stop()
+                dispatch.init_main_thread_dispatch()
+            finally:
+                release.set()
+                worker.join(5)
+            self.assertFalse(worker.is_alive())
+            self.assertTrue(result[0]["isError"])
+            tool.assert_not_called()
+
+    def test_background_start_failure_only_signals_shutdown(self):
+        with mock.patch.object(runtime, "wait_for_main_thread", return_value=True), \
+                mock.patch.object(runtime, "_start_server", side_effect=RuntimeError("test failure")), \
+                mock.patch.object(runtime, "stop_main_thread_dispatch") as unregister:
+            worker = self._start_worker()
+            worker.join(5)
+            self.assertFalse(worker.is_alive())
+            self.assertTrue(dispatch.get_shutdown_flag().is_set())
+            unregister.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -485,7 +485,7 @@ class MCPServer:
                 # (Responses have "id" + "result"/"error" but no "method")
                 # Both get 202 if there are no requests to respond to.
 
-                self._process_notifications(notifications)
+                self._process_notifications(notifications, session_id)
 
                 if not requests:
                     self.send_response(202)
@@ -507,7 +507,7 @@ class MCPServer:
             # Notifications
             # ----------------------------------------------------------
 
-            def _process_notifications(self, notifications):
+            def _process_notifications(self, notifications, session_id):
                 """Handle client notifications that need server action.
 
                 Only ``notifications/cancelled`` matters here: it asks the
@@ -520,10 +520,12 @@ class MCPServer:
                     if msg.get("method") != "notifications/cancelled":
                         continue
                     params = msg.get("params") or {}
+                    if not isinstance(params, dict):
+                        continue
                     request_id = params.get("requestId")
                     if request_id is None:
                         continue
-                    if server_ref.cancel_request(request_id):
+                    if server_ref.cancel_request(request_id, session_id):
                         server_ref.log(
                             f"Cancelled queued request {request_id}"
                         )
@@ -553,7 +555,7 @@ class MCPServer:
                     server_ref.log(f"JSON: {method} (id={request_id})")
 
                     result, is_error = self._dispatch_method(
-                        method, params, request_id=request_id
+                        method, params, request_id=request_id, session_id=session_id
                     )
 
                     response = {"jsonrpc": "2.0", "id": request_id}
@@ -608,7 +610,7 @@ class MCPServer:
                         server_ref.log(f"SSE: {method} (id={request_id})")
 
                         result, is_error = self._dispatch_method(
-                            method, params, request_id=request_id
+                            method, params, request_id=request_id, session_id=session_id
                         )
 
                         response = {"jsonrpc": "2.0", "id": request_id}
@@ -629,7 +631,7 @@ class MCPServer:
             # Method dispatch (shared by JSON and SSE paths)
             # ----------------------------------------------------------
 
-            def _dispatch_method(self, method, params, request_id=None):
+            def _dispatch_method(self, method, params, request_id=None, session_id=None):
                 """
                 Dispatch a JSON-RPC method to the appropriate handler.
 
@@ -643,7 +645,7 @@ class MCPServer:
                         return self._handle_tools_list(params), False
                     elif method == "tools/call":
                         return (
-                            self._handle_tools_call(params, request_id),
+                            self._handle_tools_call(params, request_id, session_id),
                             False,
                         )
                     elif method == "resources/list":
@@ -692,7 +694,7 @@ class MCPServer:
                 """Handle tools/list request."""
                 return {"tools": server_ref.tools}
 
-            def _handle_tools_call(self, params, request_id=None):
+            def _handle_tools_call(self, params, request_id=None, session_id=None):
                 """Handle tools/call request - dispatch to tool handler."""
                 tool_name = params.get("name", "")
                 arguments = params.get("arguments", {})
@@ -711,10 +713,9 @@ class MCPServer:
 
                 # Convert to the format the existing handler expects
                 call_data = {"params": {"name": tool_name, "arguments": arguments}}
-                if request_id is not None:
-                    # Lets the dispatcher honour notifications/cancelled for
-                    # this call while it is still queued.
-                    call_data["request_id"] = request_id
+                request_key = server_ref._request_key(request_id, session_id)
+                if request_key is not None:
+                    call_data["_request_key"] = request_key
                 return handler(call_data)
 
             def _handle_resources_list(self, params):
@@ -815,7 +816,14 @@ class MCPServer:
         while self.is_running:
             self.httpd.handle_request()
 
-    def cancel_request(self, request_id):
+    def _request_key(self, request_id, session_id):
+        # Sessionless legacy calls still execute, but cannot be targeted by
+        # cancellation: there is no reliable client identity to match them to.
+        if not session_id or type(request_id) not in (str, int, float):
+            return None
+        return (self, session_id, request_id)
+
+    def cancel_request(self, request_id, session_id=None):
         """Forward an MCP cancellation to the Fusion main-thread dispatcher.
 
         Returns True when the request was still queued and got cancelled.
@@ -823,13 +831,16 @@ class MCPServer:
         unknown, or its tool already runs on the Fusion main thread (which
         cannot be aborted).
         """
+        request_key = self._request_key(request_id, session_id)
+        if request_key is None:
+            return False
         try:
             dispatch = self._dispatch_module()
         except Exception as exc:
             self.log(f"Cannot cancel request {request_id}: {exc}")
             return False
         try:
-            return dispatch.cancel_request(request_id)
+            return dispatch.cancel_request(request_key)
         except Exception as exc:
             self.log(f"Error cancelling request {request_id}: {exc}")
             return False

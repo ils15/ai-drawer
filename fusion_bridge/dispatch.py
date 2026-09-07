@@ -93,16 +93,17 @@ class _BridgeEventHandler(adsk.core.CustomEventHandler):
 # ── Recursive timer scheduler ────────────────────────────────────────────
 
 
-def _schedule_tick():
+def _schedule_tick(shutdown=None):
     """Fire a single tick, then reschedule if still active."""
-    if not _scheduler_active.is_set():
+    shutdown = shutdown if shutdown is not None else _halt
+    if shutdown.is_set() or not _scheduler_active.is_set():
         return
     try:
         _fire_event_if_needed()
     except Exception as exc:
         log(f"Scheduler tick error: {exc}", adsk.core.LogLevels.ErrorLogLevel)
-    if _scheduler_active.is_set():
-        t = threading.Timer(_TICK_INTERVAL, _schedule_tick)
+    if _scheduler_active.is_set() and not shutdown.is_set():
+        t = threading.Timer(_TICK_INTERVAL, _schedule_tick, args=(shutdown,))
         t.daemon = True
         t.start()
 
@@ -145,7 +146,7 @@ _CANCELLED_TEXT = (
     "Error: Request cancelled; work that already started may still complete."
 )
 
-# request_id -> envelope, for requests that may still be cancellable.
+# Server/session/request key -> envelope; never key by JSON-RPC ID alone.
 _inflight = {}
 _inflight_lock = threading.Lock()
 
@@ -174,12 +175,12 @@ def _put_reply(reply, result):
 
 
 def _deregister_inflight(envelope):
-    request_id = envelope.get("_request_id")
-    if request_id is None:
+    request_key = envelope.get("_request_key")
+    if request_key is None:
         return
     with _inflight_lock:
-        if _inflight.get(request_id) is envelope:
-            del _inflight[request_id]
+        if _inflight.get(request_key) is envelope:
+            del _inflight[request_key]
 
 
 def set_tool_handler(handler):
@@ -187,7 +188,7 @@ def set_tool_handler(handler):
     _callback_impl = handler
 
 
-def cancel_request(request_id):
+def cancel_request(request_key):
     """Cancel a queued request before the Fusion main thread executes it.
 
     Returns ``True`` when the request was still queued and has been
@@ -197,7 +198,7 @@ def cancel_request(request_id):
     completing anyway.
     """
     with _inflight_lock:
-        envelope = _inflight.get(request_id)
+        envelope = _inflight.get(request_key)
     if envelope is None:
         return False
 
@@ -222,7 +223,8 @@ def dispatch_to_main_thread(call_data):
     cancel_event = (
         call_data.get("_cancel_event") if isinstance(call_data, dict) else None
     )
-    if cancel_event is not None and (cancel_event.is_set() or _halt.is_set()):
+    shutdown = _halt
+    if shutdown.is_set() or (cancel_event is not None and cancel_event.is_set()):
         return _text_result(_CANCELLED_TEXT)
     if threading.current_thread() is threading.main_thread():
         if _callback_impl is None:
@@ -231,16 +233,21 @@ def dispatch_to_main_thread(call_data):
 
     reply = queue.Queue(maxsize=1)
     envelope = _new_envelope(call_data, reply)
+    envelope["_shutdown"] = shutdown
 
-    request_id = (
-        call_data.get("request_id") if isinstance(call_data, dict) else None
+    request_key = (
+        call_data.get("_request_key") if isinstance(call_data, dict) else None
     )
-    if request_id is not None:
-        envelope["_request_id"] = request_id
+    if request_key is not None:
+        envelope["_request_key"] = request_key
         with _inflight_lock:
-            _inflight[request_id] = envelope
-
-    _pending.put(envelope)
+            if request_key in _inflight:
+                return _text_result("Error: Request ID is already in flight in this session")
+            _inflight[request_key] = envelope
+            # Publish the envelope before cancellation can find it.
+            _pending.put(envelope)
+    else:
+        _pending.put(envelope)
 
     try:
         get_app().fireCustomEvent(CALLBACK_EVENT_ID)
@@ -258,37 +265,15 @@ def dispatch_to_main_thread(call_data):
             f"work ({exc})"
         )
 
-    if cancel_event is None:
-        try:
-            return reply.get(timeout=settings.MCP_MAIN_THREAD_TIMEOUT)
-        except queue.Empty:
-            result, cancelled_flag = _classify_timeout(envelope)
-            if cancelled_flag:
-                _deregister_inflight(envelope)
-            log(
-                "Timed out waiting for the Fusion main thread "
-                f"({settings.MCP_MAIN_THREAD_TIMEOUT:.0f}s); "
-                + (
-                    "request cancelled before execution"
-                    if cancelled_flag
-                    else "request may still be executing"
-                ),
-                adsk.core.LogLevels.ErrorLogLevel,
-            )
-            return result
-
-    # Upstream v1.4.0 passes a `_cancel_event` (mcp_http_2026.py) so the
-    # protocol layer can cancel / time-out a tool while the dispatch still
-    # owns the envelope; respond to it here, then fall back to the settings
-    # timeout as a safety net.
     deadline = time.monotonic() + settings.MCP_MAIN_THREAD_TIMEOUT
     while True:
-        if cancel_event.is_set() or _halt.is_set():
-            cancel_event.set()
+        if shutdown.is_set() or (cancel_event is not None and cancel_event.is_set()):
+            if cancel_event is not None:
+                cancel_event.set()
             with envelope["_lock"]:
                 if envelope["_state"] == "queued":
                     _try_remove(envelope)
-                envelope["_state"] = "cancelled"
+                    envelope["_state"] = "cancelled"
             _deregister_inflight(envelope)
             return _text_result(_CANCELLED_TEXT)
         try:
@@ -299,6 +284,12 @@ def dispatch_to_main_thread(call_data):
             result, cancelled_flag = _classify_timeout(envelope)
             if cancelled_flag:
                 _deregister_inflight(envelope)
+            log(
+                f"Timed out waiting for the Fusion main thread ({settings.MCP_MAIN_THREAD_TIMEOUT:.0f}s); "
+                + ("request cancelled before execution" if cancelled_flag
+                   else "request may still be executing"),
+                adsk.core.LogLevels.ErrorLogLevel,
+            )
             return result
 
 
@@ -357,6 +348,7 @@ def wait_for_main_thread(poll_interval=1.0, shutdown=None):
         envelope = _new_envelope(
             {"params": {"name": "__startup_ping__"}}, reply
         )
+        envelope["_shutdown"] = shutdown
         _pending.put(envelope)
 
         try:
@@ -417,6 +409,14 @@ def _flush_pending():
 
             payload = envelope["payload"]
             reply = envelope["reply"]
+            shutdown = envelope.get("_shutdown")
+            if shutdown is not None and shutdown.is_set():
+                with envelope["_lock"]:
+                    envelope["_state"] = "cancelled"
+                _deregister_inflight(envelope)
+                _put_reply(reply, _text_result(_QUEUED_CANCEL_TEXT))
+                processed += 1
+                continue
 
             # The readiness ping is answered here, before any tool routing,
             # so it succeeds even while the tool handler is not installed
@@ -504,12 +504,13 @@ def _flush_pending():
 
 
 def init_main_thread_dispatch():
-    global _callback_event, _registered
+    global _callback_event, _registered, _halt
 
     if _registered:
         raise RuntimeError("Main-thread dispatch is already initialized")
 
-    _halt.clear()
+    # A stopped generation stays stopped, even after a fast restart.
+    _halt = threading.Event()
     _scheduler_active.clear()
     _callback_event = get_app().registerCustomEvent(CALLBACK_EVENT_ID)
     handler = _BridgeEventHandler()
@@ -522,11 +523,25 @@ def init_main_thread_dispatch():
     _schedule_tick()
 
 
+def request_main_thread_shutdown():
+    """Signal shutdown from any thread; no Fusion API calls here."""
+    _halt.set()
+    _scheduler_active.clear()
+    while True:
+        try:
+            envelope = _pending.get_nowait()
+        except queue.Empty:
+            break
+        with envelope["_lock"]:
+            envelope["_state"] = "cancelled"
+        _deregister_inflight(envelope)
+        _put_reply(envelope["reply"], _text_result(_QUEUED_CANCEL_TEXT))
+
+
 def stop_main_thread_dispatch():
     global _callback_event, _registered
 
-    _halt.set()
-    _scheduler_active.clear()
+    request_main_thread_shutdown()
 
     if _callback_event and hasattr(_callback_event, "_bridge_handler"):
         try:

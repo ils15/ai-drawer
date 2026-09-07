@@ -76,9 +76,17 @@ A timeout cancels queued work; its tool error explicitly warns that work
 already started may finish. Inspect the design before retrying a mutation.
 Over-capacity requests return HTTP 429 before dispatch.
 
-Legacy cancellation/startup improvements are being handled in
-[PR #3](https://github.com/frankhommers/autodesk-fusion-mcp/pull/3). This
-protocol change does not incorporate that unmerged PR's lifecycle fixes.
+Legacy `notifications/cancelled` targets the originating server instance,
+session, and request ID. Different sessions can reuse the same request ID
+without interfering. Calls without a session header remain supported, but
+cannot be targeted by cancellation notifications. A duplicate in-flight ID
+within one session returns a tool error and does not replace the original.
+
+Startup waits for a main-thread readiness round-trip before binding the port.
+`MCP_MAIN_THREAD_TIMEOUT` bounds dispatcher waits (default 120 seconds): queued
+work is cancelled; already-running work may complete and must not be blindly
+retried. Stopping cancels queued work and retires that startup generation so
+old workers, timers, and queued requests cannot resume after a restart.
 
 Persistent `execute_python` calls using the modern protocol must provide an
 explicit, nonempty `session_id`, reused on related calls. Set

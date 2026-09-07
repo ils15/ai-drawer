@@ -20,6 +20,7 @@ from .dispatch import (
     set_tool_handler,
     stop_main_thread_dispatch,
     wait_for_main_thread,
+    request_main_thread_shutdown,
 )
 
 
@@ -126,7 +127,7 @@ def _start_server():
     return True
 
 
-def _server_start_worker():
+def _server_start_worker(shutdown_flag=None):
     """Bind the MCP port only once Fusion's main thread is pumping events.
 
     During a cold start Fusion auto-loads add-ins before its event loop is
@@ -135,7 +136,7 @@ def _server_start_worker():
     the add-in is manually restarted.  Waiting here replicates the
     conditions of a manual (post-startup) add-in start.
     """
-    shutdown_flag = get_shutdown_flag()
+    shutdown_flag = shutdown_flag if shutdown_flag is not None else get_shutdown_flag()
     if shutdown_flag.is_set():
         return
 
@@ -154,14 +155,14 @@ def _server_start_worker():
             return
         try:
             if not _start_server():
-                stop_main_thread_dispatch()
+                request_main_thread_shutdown()
         except Exception as exc:
             log(
                 f"ERROR: Failed to start MCP server: {exc}",
                 adsk.core.LogLevels.ErrorLogLevel,
             )
             log(traceback.format_exc(), adsk.core.LogLevels.ErrorLogLevel)
-            stop_main_thread_dispatch()
+            request_main_thread_shutdown()
 
 
 def start():
@@ -184,6 +185,7 @@ def start():
         try:
             starter = threading.Thread(
                 target=_server_start_worker,
+                args=(get_shutdown_flag(),),
                 name="AutodeskFusionMCP-server-start",
                 daemon=True,
             )

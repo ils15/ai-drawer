@@ -209,7 +209,7 @@ class DispatchTimeoutTests(unittest.TestCase):
                 dispatch.dispatch_to_main_thread(
                     {
                         "params": {"name": "some_tool", "arguments": {}},
-                        "request_id": "queued-timeout",
+                        "_request_key": "queued-timeout",
                     }
                 )
             )
@@ -251,7 +251,7 @@ class DispatchTimeoutTests(unittest.TestCase):
                 dispatch.dispatch_to_main_thread(
                     {
                         "params": {"name": "slow_tool", "arguments": {}},
-                        "request_id": "running-timeout",
+                        "_request_key": "running-timeout",
                     }
                 )
             )
@@ -287,7 +287,7 @@ class DispatchTimeoutTests(unittest.TestCase):
                 dispatch.dispatch_to_main_thread(
                     {
                         "params": {"name": "some_tool", "arguments": {}},
-                        "request_id": "cancel-queued",
+                        "_request_key": "cancel-queued",
                     }
                 )
             )
@@ -328,7 +328,7 @@ class DispatchTimeoutTests(unittest.TestCase):
                 dispatch.dispatch_to_main_thread(
                     {
                         "params": {"name": "slow_tool", "arguments": {}},
-                        "request_id": "cancel-running",
+                        "_request_key": "cancel-running",
                     }
                 )
             )
@@ -384,6 +384,16 @@ class CancelNotificationHttpTests(unittest.TestCase):
             log_callback=lambda message: None,
         )
         self.server.start()
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        conn.request("POST", "/mcp", json.dumps({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"protocolVersion": "2025-11-25", "capabilities": {},
+                       "clientInfo": {"name": "cancel-test", "version": "1"}},
+        }), {"Content-Type": "application/json", "Accept": "application/json"})
+        response = conn.getresponse()
+        self.session_id = response.getheader("Mcp-Session-Id")
+        response.read()
+        conn.close()
 
     def tearDown(self):
         self.server.stop()
@@ -406,6 +416,7 @@ class CancelNotificationHttpTests(unittest.TestCase):
                 headers={
                     "Content-Type": "application/json",
                     "Accept": "application/json, text/event-stream",
+                    "Mcp-Session-Id": self.session_id,
                 },
             )
             response = conn.getresponse()
@@ -415,7 +426,7 @@ class CancelNotificationHttpTests(unittest.TestCase):
                 # SSE responses have no Content-Length; read the first
                 # event line instead of waiting for EOF.
                 while True:
-                    line = response.fp.readline()
+                    line = response.readline()
                     if not line:
                         break
                     text_line = line.decode("utf-8")
@@ -442,7 +453,7 @@ class CancelNotificationHttpTests(unittest.TestCase):
         worker_thread = threading.Thread(target=call_tool)
         worker_thread.start()
         self.assertTrue(
-            _wait_for_inflight_state("cancel-e2e", "queued"),
+            _wait_for_inflight_state(self.server._request_key("cancel-e2e", self.session_id), "queued"),
             "server must register the call as cancellable",
         )
 
