@@ -3,7 +3,7 @@
 Use this guide when driving Autodesk Fusion through this MCP server.
 
 Each capability is its own tool -- `call_autodesk_api`, `execute_python`,
-`capture_viewport`, `get_active_selection`, `fetch_api_documentation`,
+`capture_viewport`, `get_viewport`, `set_viewport`, `get_active_selection`, `fetch_api_documentation`,
 `fetch_online_documentation`, `fetch_design_guide` and the `*_script` tools.
 The JSON blocks below show the arguments for the named tool; there is no
 wrapping `operation` field.
@@ -215,6 +215,49 @@ Viewport example, `capture_viewport`:
   "width": 1200,
   "height": 900
 }
+```
+
+Use `get_viewport` to read the active camera. Its `camera` object can be passed
+unchanged to `set_viewport` as `{"camera": ...}` to restore the view. Coordinates
+and orthographic extents are in **centimeters**; angles are in **degrees**.
+
+Examples for `set_viewport`:
+
+```json
+{"view": "isometric", "projection": "orthographic", "fit": true}
+```
+
+```json
+{"orbit": {"yaw": 30, "pitch": 15}, "pan": {"x": 1, "y": 0}, "zoom": 1.5}
+```
+
+Order: projection/standard view, fit, orbit, pan, zoom. Standard views follow
+the user's ViewCube definitions. Orbit uses right-hand rotation about camera
+up (yaw), right (pitch), and the viewing direction (roll). Pan translates the
+camera along screen right/up in cm. Zoom greater than 1 zooms in; less than 1
+zooms out. Pass a complete `camera` snapshot alone, without relative controls.
+All clients share the same active viewport and Fusion design; MCP transport
+statelessness does not create private cameras or isolate CAD state per client.
+
+For a screenshot without leaving the user's camera changed, use
+`capture_viewport` with temporary `view` and/or `fit`. The original camera is
+restored after success or failure:
+
+```json
+{"width": 1600, "height": 1200, "view": "isometric", "fit": true, "background": "transparent"}
+```
+
+`background` accepts `viewport` (default), `transparent`, or `#RRGGBB`.
+`anti_aliasing` defaults to true. Width/height default to 800/600; a zero uses
+the corresponding current viewport dimension. Each explicit dimension is
+limited to 8192 pixels, and the rendered image to 16 megapixels.
+
+Optional `crop` uses rendered-image pixels, measured from its top-left corner.
+The returned PNG has the crop's dimensions; it is not stretched back to the
+requested render size:
+
+```json
+{"width": 1600, "height": 1200, "background": "#FFFFFF", "crop": {"x": 400, "y": 300, "width": 800, "height": 600}}
 ```
 
 ## 16. Reuse Context Carefully

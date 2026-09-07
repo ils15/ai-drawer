@@ -1,5 +1,6 @@
 """Fusion bridge server assembly and startup/shutdown wiring."""
 
+import platform
 import threading
 import time
 import traceback
@@ -165,7 +166,9 @@ def _server_start_worker():
 
 def start():
     version_info = python_exec.get_version_info(python_exec.get_addin_dir())
-    log(f"MCP Integration starting... {version_info}")
+    log(f"MCP Integration starting... add-in {version_info}")
+    fusion_version = getattr(adsk.core.Application.get(), "version", "unknown")
+    log(f"Runtime: Autodesk Fusion {fusion_version}; Python {platform.python_version()}")
 
     try:
         init_main_thread_dispatch()

@@ -9,13 +9,14 @@ dependencies required.
 
 - **Streamable HTTP transport** -- implements the MCP Streamable HTTP spec
   natively; no legacy SSE polling or sidecar servers.
-- **Protocol negotiation** -- speaks the `2025-11-25`, `2025-06-18` and
-  `2025-03-26` revisions and agrees on whichever the client asks for.
+- **Protocol compatibility** -- supports stateless `2026-07-28` requests and
+  retains `2025-11-25`, `2025-06-18`, and `2025-03-26` clients on the same
+  endpoint. See [protocol behavior and compatibility](docs/mcp-protocol-compatibility.md).
 - **Zero external dependencies** -- uses only Python's standard library and
   the Fusion SDK (`adsk.*`).
 - **Thread-safe bridge** -- HTTP requests are relayed to Fusion's main thread
   via a Custom Event / work-queue dispatcher, preventing crashes.
-- **11 dedicated MCP tools** -- each with a clean, focused schema for better
+- **13 dedicated MCP tools** -- each with a clean, focused schema for better
   LLM tool selection.
 
 ## Supported Platforms
@@ -70,7 +71,9 @@ Add to your MCP client config (Claude Desktop, Cursor, etc.):
 |---|---|
 | `call_autodesk_api` | Execute a generic Fusion API call via dotted path |
 | `execute_python` | Run Python code inside the live Fusion session |
-| `capture_viewport` | Capture the viewport as a PNG image |
+| `capture_viewport` | PNG capture with temporary views, transparency, solid backgrounds and cropping |
+| `get_viewport` | Read camera state and viewport dimensions |
+| `set_viewport` | Standard views, projection, orbit, pan, zoom, fit and camera restoration |
 | `get_active_selection` | Get objects currently selected in the viewport |
 | `fetch_api_documentation` | Search Fusion API metadata via runtime introspection |
 | `fetch_online_documentation` | Fetch Autodesk cloudhelp docs for a class/member |
@@ -115,7 +118,7 @@ fusion_bridge/operations.py -- per-tool routing
   |
 fusion_bridge/selection.py  -- viewport selection reader
 fusion_bridge/python_exec.py -- Python execution
-fusion_bridge/viewport.py   -- viewport capture
+fusion_bridge/viewport.py   -- camera controls and viewport capture
 fusion_bridge/doc_lookup.py -- API docs introspection
 fusion_bridge/script_store.py -- script CRUD
   |
@@ -133,6 +136,9 @@ python3 -m unittest discover -s tests
 ```
 
 CI runs these tests on every push and pull request via GitHub Actions.
+Real HTTP tests cover both protocol eras, connection reuse, and cancellation
+without requiring Fusion. A live Fusion/client smoke test is still needed
+before releasing transport changes.
 
 ### Protocol compliance with MCP Inspector
 
@@ -165,6 +171,21 @@ Frank Hommers / [Initialize](https://initialize.nl)
 This project is licensed under the terms of the MIT license. See [LICENSE](LICENSE).
 
 ## Changelog
+
+- v 1.4.0
+  - Add `get_viewport` and `set_viewport`: camera snapshots, standard views,
+    projection, orbit, pan, zoom, and fit
+  - Extend `capture_viewport` with temporary views, transparent or solid
+    backgrounds, anti-aliasing control, native dimensions, and cropping
+  - Support MCP `2026-07-28` while retaining all three supported 2025
+    revisions on the same endpoint; persistent Python calls using the new
+    protocol require an explicit `session_id`
+  - Fix empty-response framing for HTTP keep-alive clients; validate browser
+    origins and scope modern cancellation to individual requests
+  - Log the Fusion and Python runtime versions; verify the bundled Autodesk
+    utilities against Fusion 2705.1.11
+  - Validate with 108 automated tests and 35 live viewport checks on macOS;
+    expand Python 3.14 CI to Linux, macOS, and Windows
 
 - v 1.3.0
   - `fetch_online_documentation` returns a `preview` flag, so an agent can see

@@ -13,6 +13,8 @@ import _fusion_test_bootstrap  # noqa: F401  (installs adsk mock + parent pkg sh
 
 from lib.mcp_server import (
     DEFAULT_PROTOCOL_VERSION,
+    LEGACY_PROTOCOL_VERSION,
+    LEGACY_PROTOCOL_VERSIONS,
     MCP_PROTOCOL_VERSION,
     SERVER_INFO,
     SUPPORTED_PROTOCOL_VERSIONS,
@@ -23,25 +25,28 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
 class NegotiationTests(unittest.TestCase):
-    def test_every_supported_version_is_echoed_back(self):
-        for version in SUPPORTED_PROTOCOL_VERSIONS:
+    def test_every_supported_legacy_version_is_echoed_back(self):
+        for version in LEGACY_PROTOCOL_VERSIONS:
             with self.subTest(version=version):
                 self.assertEqual(negotiate_protocol_version(version), version)
 
-    def test_current_spec_revision_is_honoured(self):
+    def test_latest_legacy_revision_is_honoured(self):
         self.assertEqual(negotiate_protocol_version("2025-11-25"), "2025-11-25")
 
     def test_original_revision_still_honoured(self):
         self.assertEqual(negotiate_protocol_version("2025-03-26"), "2025-03-26")
 
     def test_unknown_version_falls_back_to_preferred(self):
-        self.assertEqual(negotiate_protocol_version("1999-01-01"), MCP_PROTOCOL_VERSION)
+        self.assertEqual(negotiate_protocol_version("1999-01-01"), LEGACY_PROTOCOL_VERSION)
 
     def test_absent_version_falls_back_to_preferred(self):
-        self.assertEqual(negotiate_protocol_version(None), MCP_PROTOCOL_VERSION)
+        self.assertEqual(negotiate_protocol_version(None), LEGACY_PROTOCOL_VERSION)
 
     def test_non_string_version_falls_back_to_preferred(self):
-        self.assertEqual(negotiate_protocol_version(20251125), MCP_PROTOCOL_VERSION)
+        self.assertEqual(negotiate_protocol_version(20251125), LEGACY_PROTOCOL_VERSION)
+
+    def test_stateless_version_is_never_selected_by_initialize(self):
+        self.assertEqual(negotiate_protocol_version("2026-07-28"), LEGACY_PROTOCOL_VERSION)
 
 
 class VersionTableTests(unittest.TestCase):
