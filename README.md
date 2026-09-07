@@ -172,6 +172,12 @@ This project is licensed under the terms of the MIT license. See [LICENSE](LICEN
 
 ## Changelog
 
+- Unreleased
+  - Wait for Fusion's main thread before binding the MCP server; bound
+    dispatcher waits and distinguish queued cancellation from running work
+  - Scope legacy cancellation by server, session, and request ID; retire
+    queued work and background startup tasks when the add-in stops
+
 - v 1.4.0
   - Add `get_viewport` and `set_viewport`: camera snapshots, standard views,
     projection, orbit, pan, zoom, and fit

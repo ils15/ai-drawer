@@ -1,6 +1,7 @@
 """Fusion bridge server assembly and startup/shutdown wiring."""
 
 import platform
+import threading
 import time
 import traceback
 
@@ -18,10 +19,13 @@ from .dispatch import (
     log,
     set_tool_handler,
     stop_main_thread_dispatch,
+    wait_for_main_thread,
+    request_main_thread_shutdown,
 )
 
 
 _server = None
+_server_lock = threading.Lock()
 
 
 def handle_any_tool(call_data):
@@ -29,6 +33,10 @@ def handle_any_tool(call_data):
     from . import operations
 
     tool_name = call_data.get("params", {}).get("name", "")
+    if tool_name == "__startup_ping__":
+        # Internal readiness probe used by wait_for_main_thread(); not a
+        # real tool, so skip routing and per-command timing.
+        return {"content": [{"type": "text", "text": "ready"}]}
     handler = operations.TOOL_HANDLERS.get(tool_name)
     if handler is None:
         return {
@@ -119,6 +127,44 @@ def _start_server():
     return True
 
 
+def _server_start_worker(shutdown_flag=None):
+    """Bind the MCP port only once Fusion's main thread is pumping events.
+
+    During a cold start Fusion auto-loads add-ins before its event loop is
+    live.  Binding the socket from ``run()`` in that window leaves a
+    listening port that never serves requests, so MCP clients hang until
+    the add-in is manually restarted.  Waiting here replicates the
+    conditions of a manual (post-startup) add-in start.
+    """
+    shutdown_flag = shutdown_flag if shutdown_flag is not None else get_shutdown_flag()
+    if shutdown_flag.is_set():
+        return
+
+    log("Waiting for the Fusion main thread to become ready...")
+    wait_started = time.monotonic()
+    if not wait_for_main_thread(poll_interval=1.0, shutdown=shutdown_flag):
+        log("Add-in stopped before Fusion was ready; MCP server not started")
+        return
+    log(
+        "Fusion main thread ready after "
+        f"{format_duration((time.monotonic() - wait_started) * 1000)}"
+    )
+
+    with _server_lock:
+        if shutdown_flag.is_set():
+            return
+        try:
+            if not _start_server():
+                request_main_thread_shutdown()
+        except Exception as exc:
+            log(
+                f"ERROR: Failed to start MCP server: {exc}",
+                adsk.core.LogLevels.ErrorLogLevel,
+            )
+            log(traceback.format_exc(), adsk.core.LogLevels.ErrorLogLevel)
+            request_main_thread_shutdown()
+
+
 def start():
     version_info = python_exec.get_version_info(python_exec.get_addin_dir())
     log(f"MCP Integration starting... add-in {version_info}")
@@ -137,10 +183,14 @@ def start():
 
     if settings.MCP_AUTO_CONNECT:
         try:
-            if not _start_server():
-                stop_main_thread_dispatch()
-                return False
-            log("MCP Integration started successfully")
+            starter = threading.Thread(
+                target=_server_start_worker,
+                args=(get_shutdown_flag(),),
+                name="AutodeskFusionMCP-server-start",
+                daemon=True,
+            )
+            starter.start()
+            log("MCP Integration started (server binds once Fusion is ready)")
         except Exception as exc:
             log(
                 f"ERROR: Failed to start MCP server: {exc}",
@@ -161,11 +211,13 @@ def stop():
     global _server
 
     log("MCP Integration stopping...")
+    # Also releases any pending readiness wait inside _server_start_worker.
     stop_main_thread_dispatch()
 
-    if _server:
-        _server.stop()
-        _server = None
+    with _server_lock:
+        if _server:
+            _server.stop()
+            _server = None
 
     log("MCP Integration stopped")
     drain_logs()
