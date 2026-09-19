@@ -80,8 +80,11 @@ export function unreachableFailure(host: string, port: number, detail?: string):
 export function forbiddenFailure(host: string, port: number, detail?: string): ToolResult {
   const text = [
     `The Fusion add-in at ${host}:${port} rejected the request (HTTP 403).`,
-    "The add-in restricts which origins may connect. If you pinned FUSION_MCP_HOST,",
-    "make sure it matches the host the add-in is configured to accept.",
+    "The add-in gates on the Origin header, not the host. This bridge always sends the",
+    `loopback origin http://127.0.0.1:${port}, which the add-in accepts by default, so`,
+    "FUSION_MCP_HOST cannot cause this. A 403 means a non-bridge client (such as a",
+    "browser) reached the endpoint, or `allowed_origins` was edited away from its",
+    "shipped empty default in the add-in (lib/mcp_server.py).",
   ].join("\n");
   return toolFailure(text, detail);
 }
