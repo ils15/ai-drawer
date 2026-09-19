@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Keep the whole pipeline green from day one: every job must either pass or be
+# skipped. The bridge package is owned by a separate workstream and may not
+# exist yet, so its job is gated on the package actually being present.
+jobs:
+  addin:
+    name: Add-in (Python)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/addin
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11 is the floor this project commits to; the rest mirror the
+        # interpreters the bridge and dev machines run.
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install ruff
+        run: python -m pip install --upgrade pip ruff
+
+      - name: Lint (ruff check .)
+        run: ruff check .
+
+      - name: Run add-in unit tests
+        run: python -m unittest discover -s tests -v
+
+  bridge:
+    name: Bridge (TypeScript)
+    runs-on: ubuntu-latest
+    # Owned by a parallel workstream; only run when the package is present.
+    if: hashFiles('packages/bridge/package.json') != ''
+    defaults:
+      run:
+        working-directory: packages/bridge
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: packages/bridge/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build --if-present
+
+      - name: Test
+        run: npm test --if-present

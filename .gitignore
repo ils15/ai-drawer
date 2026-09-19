@@ -1,0 +1,42 @@
+# Dependencies & build output
+node_modules/
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Fusion / CAD artifacts
+*.f3d
+*.f3z
+*.step
+*.stp
+*.stl
+
+# Coverage
+coverage/
+.coverage
+htmlcov/
+*.lcov
+
+# Local runtime state (scripts dir removed from the tool surface, but keep the
+# pattern so nothing user-local is ever committed)
+user_scripts/
+
+# Editor & OS
+.vscode/*
+!.vscode/settings.json
+.idea/
+.DS_Store/
+Thumbs.db
+
+# Pantheon agent framework working state (never shipped)
+.pantheon/
