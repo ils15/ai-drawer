@@ -2,7 +2,7 @@
 
 ## Attribution
 
-`fusion360-mcp` is a **derivative work** of **`autodesk-fusion-mcp`**, created
+`ai-drawer` is a **derivative work** of **`autodesk-fusion-mcp`**, created
 and copyright by **Frank Hommers** (https://github.com/frankhommers).
 
 - Upstream project : https://github.com/frankhommers/autodesk-fusion-mcp
@@ -15,7 +15,7 @@ The upstream source was incorporated into this monorepo under
 commit history** as ancestors of this repository's history. Upstream commits
 therefore retain their original authorship and are not relicensed or
 re-attributed. Every commit made directly by this project is authored by the
-`fusion360-mcp` contributors.
+`ai-drawer` contributors.
 
 ## What changed relative to upstream
 

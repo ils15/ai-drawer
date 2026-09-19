@@ -1,9 +1,9 @@
-# fusion360-mcp
+# ai-drawer
 
 **Status: WIP** — this project is an early-stage work in progress and is not
 usable yet.
 
-`fusion360-mcp` is an MCP (Model Context Protocol) server that connects an LLM
+`ai-drawer` is an MCP (Model Context Protocol) server that connects an LLM
 running in WSL (via OpenCode) to Autodesk Fusion 360 running on the Windows
 host, so CAD geometry can be created from natural-language prompts. The
 architecture is a two-party pipeline: a TypeScript npm bridge package

@@ -1,5 +1,5 @@
 {
-  "name": "fusion360-mcp",
+  "name": "ai-drawer",
   "version": "0.1.0",
   "private": true,
   "description": "MCP server connecting OpenCode (WSL) to Autodesk Fusion 360 (Windows host). Monorepo root; see packages/*.",
