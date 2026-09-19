@@ -1,7 +1,9 @@
-import adsk.core
 import os
-from ...lib import fusionAddInUtils as futil
+
+import adsk.core
+
 from ... import settings
+from ...lib import fusionAddInUtils as futil
 
 app = adsk.core.Application.get()
 ui = app.userInterface
@@ -48,12 +50,12 @@ def stop():
 
 
 def command_created(args: adsk.core.CommandCreatedEventArgs):
-    from ...fusion_bridge import python_exec
+    from ...fusion_bridge import version_info as version_info_module
 
     inputs = args.command.commandInputs
 
     port = settings.MCP_SERVER_PORT
-    version_info = python_exec.get_version_info(python_exec.get_addin_dir())
+    version_info = version_info_module.get_version_info(version_info_module.get_addin_dir())
     about_html = f"""<div style="font-family: Arial, sans-serif; padding: 10px;">
 <h2 style="color: #0696D7;">Autodesk Fusion MCP</h2>
 <p style="color: #666;">{version_info}</p>

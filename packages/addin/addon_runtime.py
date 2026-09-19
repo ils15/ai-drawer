@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Autodesk Fusion MCP add-in runtime wiring."""
 
 from . import commands, settings

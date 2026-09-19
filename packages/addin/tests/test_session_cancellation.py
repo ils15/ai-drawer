@@ -7,10 +7,11 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import _fusion_test_bootstrap  # noqa: F401
+from test_http_protocols import HTTPFixture, sse_message
+
 import settings
 from fusion_bridge import dispatch
 from lib.mcp_server import LEGACY_PROTOCOL_VERSIONS
-from test_http_protocols import HTTPFixture, sse_message
 
 
 class SessionCancellationTests(HTTPFixture, unittest.TestCase):

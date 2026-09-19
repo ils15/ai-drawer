@@ -1,10 +1,8 @@
 """Read the active selection from the Fusion 360 viewport."""
 
+import contextlib
 import json
 import traceback
-
-import adsk.core
-import adsk.fusion
 
 from . import value_builders
 from .dispatch import get_app, log
@@ -118,13 +116,11 @@ def _extract_extended_properties(entity):
     # Bounding box (most types)
     bb = _safe_attr(entity, "boundingBox")
     if bb is not None:
-        try:
+        with contextlib.suppress(Exception):
             props["boundingBox"] = {
                 "min": {"x": bb.minPoint.x, "y": bb.minPoint.y, "z": bb.minPoint.z},
                 "max": {"x": bb.maxPoint.x, "y": bb.maxPoint.y, "z": bb.maxPoint.z},
             }
-        except Exception:
-            pass
 
     obj_type = getattr(entity, "objectType", "")
 
@@ -152,10 +148,8 @@ def _extract_extended_properties(entity):
             props["area"] = area
         centroid = _safe_attr(entity, "centroid")
         if centroid is not None:
-            try:
+            with contextlib.suppress(Exception):
                 props["centroid"] = {"x": centroid.x, "y": centroid.y, "z": centroid.z}
-            except Exception:
-                pass
 
     # BRepEdge
     elif "BRepEdge" in obj_type:

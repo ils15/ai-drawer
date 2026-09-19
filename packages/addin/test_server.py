@@ -8,8 +8,8 @@ Then connect with MCP Inspector:
     npx @modelcontextprotocol/inspector --transport streamable-http http://localhost:8765/mcp
 """
 
-import sys
 import os
+import sys
 
 # Allow direct import of the lib package.
 sys.path.insert(0, os.path.dirname(__file__))
@@ -30,12 +30,12 @@ def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 9765
     tools = [
         {
-            "name": "call_autodesk_api",
+            "name": "echo",
             "description": "Autodesk Fusion MCP (test mode -- dummy handler)",
             "inputSchema": {"type": "object", "properties": {}},
         }
     ]
-    tool_handlers = {"call_autodesk_api": dummy_tool_handler}
+    tool_handlers = {"echo": dummy_tool_handler}
     server = MCPServer(
         port=port,
         tools=tools,

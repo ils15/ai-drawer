@@ -12,7 +12,8 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import _fusion_test_bootstrap  # noqa: F401
-from fusion_bridge import viewport, tool_surface
+
+from fusion_bridge import tool_surface, viewport
 from lib import png_image
 
 
@@ -75,9 +76,8 @@ class PNGTests(unittest.TestCase):
         for invalid in (source[:-2], b'garbage', source[:35]+b'broken'+source[41:],
                         make_png(100000,100000,b''), make_png(1,1,b'\0'*100),
                         make_png(1,1,b'\0'*9,depth=16)):
-            with self.subTest(data=invalid[:30]):
-                with self.assertRaises(ValueError):
-                    png_image.transform(invalid)
+            with self.subTest(data=invalid[:30]), self.assertRaises(ValueError):
+                png_image.transform(invalid)
         for crop in ((-1,0,1,1),(0,0,2,1),(0,0,0,1),(0.5,0,1,1)):
             with self.assertRaises(ValueError):
                 png_image.transform(source,crop)
@@ -154,16 +154,24 @@ class ViewportTests(unittest.TestCase):
         self.vp = Viewport()
         self.app = SimpleNamespace(activeViewport=self.vp)
         values = {
-            'CameraTypes': SimpleNamespace(OrthographicCameraType=0, PerspectiveCameraType=1, PerspectiveWithOrthoFacesCameraType=2),
-            'ViewOrientations': SimpleNamespace(**{name:i for i,name in enumerate(viewport.VIEW_NAMES.values())}),
+            'CameraTypes': SimpleNamespace(
+                OrthographicCameraType=0,
+                PerspectiveCameraType=1,
+                PerspectiveWithOrthoFacesCameraType=2,
+            ),
+            'ViewOrientations': SimpleNamespace(
+                **{name: i for i, name in enumerate(viewport.VIEW_NAMES.values())}
+            ),
             'Point3D': SimpleNamespace(create=Vec), 'Vector3D': SimpleNamespace(create=Vec),
             'SaveImageFileOptions': SimpleNamespace(create=lambda path: SimpleNamespace(filename=path)),
         }
         for name,value in values.items():
             patcher=patch.object(viewport.adsk.core,name,value,create=True)
-            patcher.start(); self.addCleanup(patcher.stop)
+            self.addCleanup(patcher.stop)
+            patcher.start()
         patcher=patch.object(viewport.adsk.core.Application,'get',return_value=self.app)
-        patcher.start(); self.addCleanup(patcher.stop)
+        self.addCleanup(patcher.stop)
+        patcher.start()
 
     def result(self, response):
         self.assertFalse(response.get('isError'),response)
@@ -187,10 +195,11 @@ class ViewportTests(unittest.TestCase):
 
     def test_orbit_preserves_target_distance_and_orthogonal_up(self):
         after=self.result(viewport.set_viewport({'orbit':{'yaw':90,'pitch':30,'roll':45}}))['camera']
-        eye=tuple(after['eye'].values()); up=tuple(after['up_vector'].values())
+        eye=tuple(after['eye'].values())
+        up=tuple(after['up_vector'].values())
         self.assertAlmostEqual(math.hypot(*eye),10)
         self.assertAlmostEqual(math.hypot(*up),1)
-        self.assertAlmostEqual(sum(x*y for x,y in zip(eye,up)),0)
+        self.assertAlmostEqual(sum(x*y for x,y in zip(eye,up,strict=True)),0)
         self.assertAlmostEqual(eye[0],10*math.cos(math.pi/6))
         self.assertAlmostEqual(eye[1],-5)
         self.assertEqual(after['target'],{'x':0,'y':0,'z':0})
@@ -206,8 +215,12 @@ class ViewportTests(unittest.TestCase):
         invalid=[{'zoom':0},{'zoom':True},{'orbit':{'yaw':float('nan')}}, {'pan':{'x':float('inf')}},
                  {'view':'invalid'},{'projection':'invalid'},{'fit':'yes'},
                  {'camera':before['camera'],'zoom':2}]
-        pose=copy.deepcopy(before['camera']);pose['eye']=pose['target'];invalid.append({'camera':pose})
-        pose=copy.deepcopy(before['camera']);pose['up_vector']={'x':0,'y':0,'z':1};invalid.append({'camera':pose})
+        pose=copy.deepcopy(before['camera'])
+        pose['eye']=pose['target']
+        invalid.append({'camera':pose})
+        pose=copy.deepcopy(before['camera'])
+        pose['up_vector']={'x':0,'y':0,'z':1}
+        invalid.append({'camera':pose})
         for args in invalid:
             with self.subTest(args=args):
                 self.assertTrue(viewport.set_viewport(args)['isError'])

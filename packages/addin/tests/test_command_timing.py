@@ -8,7 +8,7 @@ from datetime import datetime
 
 import _fusion_test_bootstrap  # noqa: F401  (installs adsk mock + parent pkg shim)
 
-from fusion_bridge import dispatch
+from fusion_bridge import dispatch, operations, runtime
 
 
 class FormatDurationTests(unittest.TestCase):
@@ -78,8 +78,6 @@ class LogTimestampTests(unittest.TestCase):
             f"(gap was {gap_seconds:.3f}s)",
         )
 
-
-from fusion_bridge import operations, runtime
 
 
 class HandleAnyToolTimingTests(unittest.TestCase):

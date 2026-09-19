@@ -9,7 +9,7 @@ import adsk.core
 
 from .. import settings
 from ..lib import mcp_server as mcp_server_module
-from . import doc_lookup, python_exec, tool_surface
+from . import doc_lookup, tool_surface, version_info
 from .dispatch import (
     dispatch_to_main_thread,
     drain_logs,
@@ -17,12 +17,11 @@ from .dispatch import (
     get_shutdown_flag,
     init_main_thread_dispatch,
     log,
+    request_main_thread_shutdown,
     set_tool_handler,
     stop_main_thread_dispatch,
     wait_for_main_thread,
-    request_main_thread_shutdown,
 )
-
 
 _server = None
 _server_lock = threading.Lock()
@@ -64,6 +63,7 @@ def create_server():
     set_tool_handler(handle_any_tool)
 
     server = mcp_server_module.MCPServer(
+        host=settings.MCP_SERVER_HOST,
         port=settings.MCP_SERVER_PORT,
         tools=tool_surface.TOOL_DEFINITIONS,
         tool_handlers={
@@ -83,7 +83,7 @@ def create_server():
     )
 
     try:
-        info = python_exec.get_version_info(python_exec.get_addin_dir())
+        info = version_info.get_version_info(version_info.get_addin_dir())
         if "(" in info:
             server.git_commit = info.split("(")[1].rstrip(")")
     except Exception:
@@ -99,7 +99,7 @@ def _start_server():
         log("MCP server already running")
         return True
 
-    log(f"Starting MCP server on port {settings.MCP_SERVER_PORT}...")
+    log(f"Starting MCP server on {settings.MCP_SERVER_HOST}:{settings.MCP_SERVER_PORT}...")
     attempt = 0
     shutdown_flag = get_shutdown_flag()
     while not shutdown_flag.is_set():
@@ -120,9 +120,9 @@ def _start_server():
         log("MCP server start aborted (add-in stopping)")
         return False
 
-    version_info = python_exec.get_version_info(python_exec.get_addin_dir())
+    version = version_info.get_version_info(version_info.get_addin_dir())
     log(
-        f"[SUCCESS] MCP server {version_info} running at http://127.0.0.1:{settings.MCP_SERVER_PORT}/mcp"
+        f"[SUCCESS] MCP server {version} running at http://{settings.MCP_SERVER_HOST}:{settings.MCP_SERVER_PORT}/mcp"
     )
     return True
 
@@ -166,8 +166,8 @@ def _server_start_worker(shutdown_flag=None):
 
 
 def start():
-    version_info = python_exec.get_version_info(python_exec.get_addin_dir())
-    log(f"MCP Integration starting... add-in {version_info}")
+    version = version_info.get_version_info(version_info.get_addin_dir())
+    log(f"MCP Integration starting... add-in {version}")
     fusion_version = getattr(adsk.core.Application.get(), "version", "unknown")
     log(f"Runtime: Autodesk Fusion {fusion_version}; Python {platform.python_version()}")
 

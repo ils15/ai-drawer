@@ -1,6 +1,7 @@
 """Explicit camera controls and PNG capture for the active Fusion viewport."""
 
 import base64
+import contextlib
 import json
 import math
 import os
@@ -76,11 +77,11 @@ def _xyz(value):
 
 
 def _sub(a, b):
-    return tuple(x - y for x, y in zip(a, b))
+    return tuple(x - y for x, y in zip(a, b, strict=True))
 
 
 def _add(a, b):
-    return tuple(x + y for x, y in zip(a, b))
+    return tuple(x + y for x, y in zip(a, b, strict=True))
 
 
 def _scale(v, factor):
@@ -101,7 +102,7 @@ def _unit(v):
 def _rotate(v, axis, degrees):
     angle = math.radians(degrees)
     cosine, sine = math.cos(angle), math.sin(angle)
-    dot = sum(a * b for a, b in zip(axis, v))
+    dot = sum(a * b for a, b in zip(axis, v, strict=True))
     return _add(_add(_scale(v, cosine), _scale(_cross(axis, v), sine)), _scale(axis, dot * (1 - cosine)))
 
 
@@ -157,7 +158,11 @@ def _validate_controls(arguments):
     if "camera" in arguments:
         if set(arguments) - {"camera", "description"}:
             raise ValueError("camera cannot be combined with relative controls, view, projection, or fit")
-        pose = _object(arguments["camera"], "camera", ("eye", "target", "up_vector", "projection", "extents", "perspective_angle"), ("eye", "target", "up_vector", "projection"))
+        pose = _object(
+            arguments["camera"], "camera",
+            ("eye", "target", "up_vector", "projection", "extents", "perspective_angle"),
+            ("eye", "target", "up_vector", "projection"),
+        )
         direction = _unit(_sub(_vector(pose["target"], "target"), _vector(pose["eye"], "eye")))
         _unit(_cross(direction, _vector(pose["up_vector"], "up_vector")))
         if pose["projection"] not in PROJECTIONS:
@@ -276,7 +281,10 @@ def capture(arguments):
         if view is not None and view not in VIEW_NAMES:
             raise ValueError("Unknown standard view")
         background = arguments.get("background", "viewport")
-        if not isinstance(background, str) or (background not in ("viewport", "transparent") and not re.fullmatch(r"#[0-9a-fA-F]{6}", background)):
+        if not isinstance(background, str) or (
+            background not in ("viewport", "transparent")
+            and not re.fullmatch(r"#[0-9a-fA-F]{6}", background)
+        ):
             raise ValueError("background must be viewport, transparent, or #RRGGBB")
         rgb = tuple(int(background[i:i + 2], 16) for i in (1, 3, 5)) if background.startswith("#") else None
         vp = _viewport()
@@ -314,15 +322,18 @@ def capture(arguments):
             png = fh.read()
         if crop is not None or rgb is not None:
             png = png_image.transform(png, crop=crop, background=rgb)
-        result = {"content": [{"type": "image", "data": base64.b64encode(png).decode("ascii"), "mimeType": "image/png"}], "isError": False}
+        result = {
+            "content": [
+                {"type": "image", "data": base64.b64encode(png).decode("ascii"), "mimeType": "image/png"}
+            ],
+            "isError": False,
+        }
     except Exception as exc:
         result = _fail(f"Error capturing viewport: {exc}")
     finally:
         if path:
-            try:
+            with contextlib.suppress(OSError):
                 os.remove(path)
-            except OSError:
-                pass
         if original is not None:
             try:
                 vp.camera = original

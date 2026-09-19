@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Autodesk Fusion MCP - Add-in entry point.
 

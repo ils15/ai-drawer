@@ -14,18 +14,12 @@ class ToolSurfaceTests(unittest.TestCase):
     """Tests that tool_surface exposes correct tool definitions."""
 
     EXPECTED_TOOLS = {
-        "call_autodesk_api",
-        "execute_python",
         "capture_viewport",
         "get_viewport",
         "set_viewport",
         "fetch_api_documentation",
         "fetch_online_documentation",
         "fetch_design_guide",
-        "save_script",
-        "load_script",
-        "list_scripts",
-        "delete_script",
         "get_active_selection",
     }
 
@@ -40,22 +34,6 @@ class ToolSurfaceTests(unittest.TestCase):
                 self.assertTrue(len(tool_def["description"]) > 10)
                 self.assertIn("inputSchema", tool_def)
                 self.assertEqual(tool_def["inputSchema"]["type"], "object")
-
-    def test_call_autodesk_api_has_api_path(self):
-        for t in tool_surface.TOOL_DEFINITIONS:
-            if t["name"] == "call_autodesk_api":
-                self.assertIn("api_path", t["inputSchema"]["properties"])
-                self.assertIn("remember_as", t["inputSchema"]["properties"])
-                return
-        self.fail("call_autodesk_api tool not found")
-
-    def test_execute_python_has_code_field(self):
-        for t in tool_surface.TOOL_DEFINITIONS:
-            if t["name"] == "execute_python":
-                self.assertIn("code", t["inputSchema"]["properties"])
-                self.assertNotIn("api_path", t["inputSchema"]["properties"])
-                return
-        self.fail("execute_python tool not found")
 
     def test_get_active_selection_has_no_required_params(self):
         for t in tool_surface.TOOL_DEFINITIONS:

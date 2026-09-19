@@ -5,11 +5,12 @@ The `FusionContext` class owns the object store and path-resolution logic.
 Free functions `build_object` and `format_result` are independent utilities.
 """
 
+import contextlib
+
 import adsk.core
 import adsk.fusion
 
 from .dispatch import get_app
-
 
 # ── Standalone utilities ──────────────────────────────────────────────────
 
@@ -39,10 +40,8 @@ def build_object(spec):
     # Search SDK modules for the type
     search_modules = [adsk.core, adsk.fusion]
     for optional in ("adsk.cam", "adsk.drawing"):
-        try:
+        with contextlib.suppress(Exception):
             search_modules.append(__import__(optional, fromlist=["*"]))
-        except Exception:
-            pass
 
     cls = None
     for mod in search_modules:
@@ -86,11 +85,11 @@ def format_result(result, properties=None):
 
     try:
         if hasattr(result, "name"):
-            return type_name, f"name='{getattr(result, 'name')}'"
+            return type_name, f"name='{result.name}'"
         if hasattr(result, "count"):
-            return type_name, f"count={getattr(result, 'count')}"
+            return type_name, f"count={result.count}"
         if hasattr(result, "objectType"):
-            return type_name, str(getattr(result, "objectType"))
+            return type_name, str(result.objectType)
     except Exception:
         pass
 

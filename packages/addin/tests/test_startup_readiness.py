@@ -20,12 +20,11 @@ import socket
 import threading
 import time
 import unittest
-import urllib.request
 
 import _fusion_test_bootstrap  # noqa: F401  (installs adsk mock + parent pkg shim)
 
-import settings
 import lib.mcp_server
+import settings
 from fusion_bridge import dispatch, runtime
 
 

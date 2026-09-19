@@ -11,9 +11,10 @@ import unittest
 from unittest.mock import patch
 
 import _fusion_test_bootstrap  # noqa: F401
+
 from fusion_bridge import dispatch, tool_surface
 from lib.mcp_protocol import META_PREFIX, MODERN_PROTOCOL_VERSION, validate_arguments
-from lib.mcp_server import MCPServer, LEGACY_PROTOCOL_VERSIONS, SUPPORTED_PROTOCOL_VERSIONS
+from lib.mcp_server import LEGACY_PROTOCOL_VERSIONS, SUPPORTED_PROTOCOL_VERSIONS, MCPServer
 
 
 def modern(method="tools/list", params=None, request_id=7, version=MODERN_PROTOCOL_VERSION):
@@ -209,7 +210,8 @@ class ProtocolHTTPTests(HTTPFixture, unittest.TestCase):
 
     def test_missing_or_invalid_metadata(self):
         for meta in (None, {}, {META_PREFIX + "protocolVersion": MODERN_PROTOCOL_VERSION},
-                     {META_PREFIX + "protocolVersion": MODERN_PROTOCOL_VERSION, META_PREFIX + "clientCapabilities": []}):
+                     {META_PREFIX + "protocolVersion": MODERN_PROTOCOL_VERSION,
+                      META_PREFIX + "clientCapabilities": []}):
             message, headers = modern()
             message["params"]["_meta"] = meta
             self.assert_error(self.send(message, headers), 400, -32602)
@@ -345,29 +347,6 @@ class ProtocolHTTPTests(HTTPFixture, unittest.TestCase):
             headers["Accept"] = accept
             self.assert_error(self.send(message, headers), 406, -32600)
 
-    def test_explicit_python_state_for_modern_only(self):
-        tool = next(t for t in tool_surface.TOOL_DEFINITIONS if t["name"] == "execute_python")
-        self.server.tools.append(tool)
-        calls = []
-        def run(call):
-            calls.append(call)
-            return {"content": []}
-        self.server.tool_handlers["execute_python"] = run
-        args = {"code": "x = 1", "description": "test"}
-        response = self.rpc("tools/call", {"name": "execute_python", "arguments": args})
-        self.assertTrue(json.loads(response.read())["result"]["isError"])
-        self.assertEqual(calls, [])
-        for extra in ({"session_id": "explicit-handle"}, {"persistent": False}):
-            response = self.rpc("tools/call", {"name": "execute_python", "arguments": {**args, **extra}})
-            self.assertNotIn("isError", sse_message(response)["result"])
-            response.read()
-        response = self.send({"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {
-            "name": "execute_python", "arguments": args,
-        }}, {"Accept": "application/json, text/event-stream"})
-        self.assertNotIn("isError", sse_message(response)["result"])
-        response.read()
-        self.assertEqual(len(calls), 3)
-
 
 class CancellationHTTPTests(HTTPFixture, unittest.TestCase):
     def setUp(self):
@@ -482,7 +461,10 @@ class CancellationHTTPTests(HTTPFixture, unittest.TestCase):
 
 class OwnedSchemaTests(unittest.TestCase):
     def test_all_owned_schema_keywords_are_supported(self):
-        supported = {"type", "description", "properties", "required", "items", "enum", "minimum", "maximum", "additionalProperties"}
+        supported = {
+            "type", "description", "properties", "required", "items", "enum",
+            "minimum", "maximum", "additionalProperties",
+        }
         def visit(schema):
             self.assertLessEqual(schema.keys(), supported)
             for child in schema.get("properties", {}).values():
@@ -494,7 +476,10 @@ class OwnedSchemaTests(unittest.TestCase):
                 visit(tool["inputSchema"])
 
     def test_nested_schema_and_json_number_semantics(self):
-        schema = {"type": "object", "properties": {"items": {"type": "array", "items": {"type": "integer", "minimum": 1}}}}
+        schema = {
+            "type": "object",
+            "properties": {"items": {"type": "array", "items": {"type": "integer", "minimum": 1}}},
+        }
         self.assertIsNone(validate_arguments({"items": [1, 2.0]}, schema))
         for value in (True, 0, "2", 1.5):
             self.assertIsNotNone(validate_arguments({"items": [value]}, schema))

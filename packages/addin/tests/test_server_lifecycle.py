@@ -12,16 +12,15 @@ The Fusion main thread is simulated by a pump thread that services
 would, so the tests exercise the genuine readiness round-trip.
 """
 
-import _fusion_test_bootstrap  # noqa: F401  (installs adsk mock + parent pkg shim)
-
 import http.client
 import json
-import queue
 import socket
 import threading
 import time
 import unittest
 from unittest import mock
+
+import _fusion_test_bootstrap  # noqa: F401  (installs adsk mock + parent pkg shim)
 
 import settings
 from fusion_bridge import dispatch, runtime
@@ -112,7 +111,7 @@ class ServerLifecycleTests(unittest.TestCase):
 
         self._patches = [
             mock.patch.object(
-                runtime.python_exec,
+                runtime.version_info,
                 "get_version_info",
                 lambda *a, **kw: "test-version (lifecycle)",
             ),

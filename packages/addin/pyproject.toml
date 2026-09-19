@@ -1,0 +1,23 @@
+# Ruff configuration for the Fusion 360 MCP add-in.
+#
+# The add-in under packages/addin is a git subtree of upstream
+# (frankhommers/autodesk-fusion-mcp), so this file is the one place our own
+# lint policy lives.  See docs/UPSTREAM-MERGE.md before changing anything that
+# would alter upstream files.
+
+[tool.ruff]
+# 120 matches the style the upstream project actually writes.  Ruff's 88
+# default would force rewrapping ~164 lines of upstream code, which buys no
+# correctness and only widens the merge-conflict surface on every subtree pull.
+line-length = 120
+extend-exclude = [
+  # Vendored, byte-identical copies of upstream's fusionAddInUtils.  They are
+  # synced by `git subtree pull`, so editing them here would diverge the
+  # subtree from upstream and guarantee conflicts on the next pull.  Lint
+  # policy therefore does not apply to them.
+  "lib/fusionAddInUtils",
+  "third_party",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

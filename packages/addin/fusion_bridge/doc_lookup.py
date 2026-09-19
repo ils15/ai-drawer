@@ -14,7 +14,6 @@ import urllib.error
 import urllib.request
 from types import FunctionType, ModuleType
 
-
 # ── Response helpers ──────────────────────────────────────────────────────
 
 
@@ -86,24 +85,20 @@ def _score_hit(kind, namespace_name, cls, member_name, member_obj, query, catego
 
     if kind == "class":
         cls_lower = cls.__name__.lower()
-        if category in ("class_name", "all"):
-            if query == cls_lower:
-                best = max(best, _SCORE_EXACT)
-            elif query in cls_lower:
-                best = max(best, _SCORE_PARTIAL_NAME)
-        if category in ("description", "all"):
-            if query in (cls.__doc__ or "").lower():
-                best = max(best, _SCORE_DOC_HIT)
+        if category in ("class_name", "all") and query == cls_lower:
+            best = max(best, _SCORE_EXACT)
+        elif category in ("class_name", "all") and query in cls_lower:
+            best = max(best, _SCORE_PARTIAL_NAME)
+        if category in ("description", "all") and query in (cls.__doc__ or "").lower():
+            best = max(best, _SCORE_DOC_HIT)
     else:
         ml = member_name.lower()
-        if category in ("member_name", "all"):
-            if query == ml:
-                best = max(best, _SCORE_EXACT)
-            elif query in ml:
-                best = max(best, _SCORE_PARTIAL_NAME)
-        if category in ("description", "all"):
-            if query in (getattr(member_obj, "__doc__", "") or "").lower():
-                best = max(best, _SCORE_DOC_HIT)
+        if category in ("member_name", "all") and query == ml:
+            best = max(best, _SCORE_EXACT)
+        elif category in ("member_name", "all") and query in ml:
+            best = max(best, _SCORE_PARTIAL_NAME)
+        if category in ("description", "all") and query in (getattr(member_obj, "__doc__", "") or "").lower():
+            best = max(best, _SCORE_DOC_HIT)
 
     return best
 
@@ -158,7 +153,7 @@ class DocumentationProvider:
     # -- bundled guide -----------------------------------------------------
 
     def read_guide(self):
-        with open(self._guide_path, "r", encoding="utf-8") as fh:
+        with open(self._guide_path, encoding="utf-8") as fh:
             return fh.read()
 
     def handle_design_guide(self, arguments, log_fn):
@@ -447,7 +442,9 @@ _provider = DocumentationProvider()
 
 # Keep the same function signatures expected by operations.py
 strip_tags = _strip_tags
-get_guide_path = lambda: _provider._guide_path
+def get_guide_path():
+    """Return the cached path to the bundled design guide."""
+    return _provider._guide_path
 read_design_guide = _provider.read_guide
 
 

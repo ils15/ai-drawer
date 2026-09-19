@@ -1,5 +1,6 @@
 """Thread-safe callback relay for executing work on the Fusion main thread."""
 
+import contextlib
 import queue
 import threading
 import time
@@ -168,10 +169,8 @@ def _new_envelope(call_data, reply):
 
 
 def _put_reply(reply, result):
-    try:
+    with contextlib.suppress(queue.Full):
         reply.put_nowait(result)
-    except queue.Full:
-        pass
 
 
 def _deregister_inflight(envelope):
@@ -351,12 +350,10 @@ def wait_for_main_thread(poll_interval=1.0, shutdown=None):
         envelope["_shutdown"] = shutdown
         _pending.put(envelope)
 
-        try:
+        # The scheduler's keepalive ticks fire this event too, so a
+        # single failure here is not fatal.
+        with contextlib.suppress(Exception):
             get_app().fireCustomEvent(CALLBACK_EVENT_ID)
-        except Exception:
-            # The scheduler's keepalive ticks fire this event too, so a
-            # single failure here is not fatal.
-            pass
 
         try:
             result = reply.get(timeout=poll_interval)

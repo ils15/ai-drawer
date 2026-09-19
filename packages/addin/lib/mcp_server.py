@@ -19,15 +19,21 @@ Endpoints:
   GET  /health - Health check (non-MCP)
 """
 
+# UP045 rewrites `Optional[X]` as `X | None`, which only evaluates at runtime
+# on Python 3.10+.  Nothing in this module introspects annotations (no pydantic,
+# no get_type_hints), so deferring them keeps the server importable on the older
+# interpreters some Fusion installs still ship.
+from __future__ import annotations
+
 import json
-import uuid
 import threading
 import time
 import traceback
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import uuid
+from collections.abc import Callable
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 from urllib.parse import urlparse
-from typing import Callable, Dict, Optional
 
 from .mcp_http_2026 import ModernHTTPMixin
 from .mcp_protocol import (
@@ -89,9 +95,10 @@ class MCPServer:
 
     def __init__(
         self,
+        host: str = "127.0.0.1",
         port: int = 8765,
         tool_handler: Callable = None,
-        tool_name: str = "call_autodesk_api",
+        tool_name: str = "call_tool",
         tool_description: str = "",
         tool_input_schema: dict = None,
         log_callback: Callable = None,
@@ -101,6 +108,7 @@ class MCPServer:
         max_tool_requests: int = 16,
         tool_timeout: float = 120.0,
     ):
+        self.host = host
         self.port = port
         # Keep legacy single-tool attributes for backwards compat
         self.tool_handler = tool_handler
@@ -109,79 +117,9 @@ class MCPServer:
         self.tool_input_schema = tool_input_schema or {
             "type": "object",
             "properties": {
-                "operation": {
-                    "type": "string",
-                    "description": "Operation type: execute_python, capture_viewport, fetch_api_documentation, fetch_online_documentation, fetch_design_guide, save_script, load_script, list_scripts, delete_script. Omit for generic API calls.",
-                },
-                "api_path": {
-                    "type": "string",
-                    "description": "Dotted path to Autodesk Fusion API method/property (e.g. 'rootComponent.sketches.add'). Shortcuts: app, ui, design, rootComponent, $stored_var",
-                },
-                "args": {
-                    "type": "array",
-                    "items": {},
-                    "description": 'Positional arguments. Can be literals, API paths, $references, or constructors like {"type": "Point3D", "x": 0, "y": 0, "z": 0}',
-                },
-                "kwargs": {
+                "arguments": {
                     "type": "object",
-                    "description": "Keyword arguments for the API call",
-                },
-                "remember_as": {
-                    "type": "string",
-                    "description": "Store the result with this name for later use via $name",
-                },
-                "return_properties": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Which properties to return from the result object",
-                },
-                "code": {
-                    "type": "string",
-                    "description": "Python code to execute (when operation='execute_python')",
-                },
-                "description": {
-                    "type": "string",
-                    "description": "Short description of what the code/operation does (REQUIRED for execute_python, shown in Fusion console)",
-                },
-                "session_id": {
-                    "type": "string",
-                    "description": "Explicit Python session ID for persistent variables; required for persistent execution on MCP 2026-07-28",
-                },
-                "persistent": {
-                    "type": "boolean",
-                    "description": "Whether to persist Python session variables (default true)",
-                },
-                "search_term": {
-                    "type": "string",
-                    "description": "Search term for API documentation",
-                },
-                "category": {
-                    "type": "string",
-                    "description": "Search category: class_name, member_name, description, or all",
-                },
-                "max_results": {
-                    "type": "integer",
-                    "description": "Maximum number of documentation results",
-                },
-                "class_name": {
-                    "type": "string",
-                    "description": "Class name for online documentation lookup",
-                },
-                "member_name": {
-                    "type": "string",
-                    "description": "Member name for online documentation lookup",
-                },
-                "filename": {
-                    "type": "string",
-                    "description": "Script filename for save/load/delete operations",
-                },
-                "width": {
-                    "type": "integer",
-                    "description": "Image width in pixels for capture_viewport (default: 800)",
-                },
-                "height": {
-                    "type": "integer",
-                    "description": "Image height in pixels for capture_viewport (default: 600)",
+                    "description": "Arguments forwarded to the legacy single tool.",
                 },
             },
         }
@@ -209,14 +147,14 @@ class MCPServer:
                 {self.tool_name: self.tool_handler} if self.tool_handler else {}
             )
 
-        self.sessions: Dict[str, dict] = {}  # Streamable HTTP sessions
+        self.sessions: dict[str, dict] = {}  # Streamable HTTP sessions
         self.sessions_lock = threading.Lock()
         self.resources: list = []  # MCP Resources (static content)
-        self.git_commit: Optional[str] = None  # Set externally after creation
-        self.httpd: Optional[HTTPServer] = None
-        self.server_thread: Optional[threading.Thread] = None
+        self.git_commit: str | None = None  # Set externally after creation
+        self.httpd: HTTPServer | None = None
+        self.server_thread: threading.Thread | None = None
         self.is_running = False
-        self._start_time: Optional[float] = None
+        self._start_time: float | None = None
 
     def log(self, message: str):
         """Log a message."""
@@ -781,7 +719,7 @@ class MCPServer:
         try:
             ThreadingHTTPServer.allow_reuse_address = True
             self.httpd = ThreadingHTTPServer(
-                ("127.0.0.1", self.port), MCPRequestHandler
+                (self.host, self.port), MCPRequestHandler
             )
             self.httpd.timeout = 1
             self.is_running = True
@@ -792,13 +730,13 @@ class MCPServer:
             )
             self.server_thread.start()
 
-            self.log(f"MCP Server started on http://127.0.0.1:{self.port}")
+            self.log(f"MCP Server started on http://{self.host}:{self.port}")
             self.log(f"  Add-in: {SERVER_INFO['name']} v{SERVER_INFO['version']}")
             self.log(f"  MCP transport: {MODERN_PROTOCOL_VERSION} (stateless requests)")
             self.log(f"  MCP legacy: {', '.join(LEGACY_PROTOCOL_VERSIONS)} (initialize handshake)")
-            self.log(f"  Streamable HTTP: http://127.0.0.1:{self.port}/mcp")
-            self.log(f"  Health check:    http://127.0.0.1:{self.port}/health")
-            self.log(f"Add to MCP client config:")
+            self.log(f"  Streamable HTTP: http://{self.host}:{self.port}/mcp")
+            self.log(f"  Health check:    http://{self.host}:{self.port}/health")
+            self.log("Add to MCP client config:")
             self.log(
                 f'  "autodesk-fusion-mcp": {{"type": "http", "url": "http://127.0.0.1:{self.port}/mcp"}}'
             )

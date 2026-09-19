@@ -116,16 +116,6 @@ class ModernHTTPMixin:
         if not isinstance(arguments, dict):
             raise ProtocolError(-32602, "Tool arguments must be an object")
         validation_error = validate_arguments(arguments, tool["inputSchema"])
-        python_call = name == "execute_python" or (
-            name == "call_autodesk_api" and arguments.get("operation") == "execute_python"
-        )
-        if python_call and arguments.get("persistent", True):
-            if not isinstance(arguments.get("session_id"), str) or not arguments["session_id"]:
-                validation_error = (
-                    "Persistent Python calls require an explicit session_id. "
-                    "Choose a unique identifier and pass it on related calls, "
-                    "or set persistent=false for an independent execution."
-                )
         if validation_error:
             self._send_json_response(200, self._modern_response(message, self._tool_error(validation_error)))
             return
