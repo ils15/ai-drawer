@@ -1,0 +1,238 @@
+# Autodesk Fusion MCP Server
+
+Standalone MCP server that runs inside Autodesk Fusion (formerly Autodesk
+Fusion 360) as an add-in. AI agents connect over **Streamable HTTP** -- the
+current MCP transport specification -- with no external proxy, middleware, or
+dependencies required.
+
+## Highlights
+
+- **Streamable HTTP transport** -- implements the MCP Streamable HTTP spec
+  natively; no legacy SSE polling or sidecar servers.
+- **Protocol compatibility** -- supports stateless `2026-07-28` requests and
+  retains `2025-11-25`, `2025-06-18`, and `2025-03-26` clients on the same
+  endpoint. See [protocol behavior and compatibility](docs/mcp-protocol-compatibility.md).
+- **Zero external dependencies** -- uses only Python's standard library and
+  the Fusion SDK (`adsk.*`).
+- **Thread-safe bridge** -- HTTP requests are relayed to Fusion's main thread
+  via a Custom Event / work-queue dispatcher, preventing crashes.
+- **13 dedicated MCP tools** -- each with a clean, focused schema for better
+  LLM tool selection.
+
+## Supported Platforms
+
+- Windows
+- Mac OS
+
+## Installation
+
+### Option A: Install from release zip (recommended)
+
+1. Download `AutodeskFusionMCP-v*.zip` from the
+   [Releases](https://github.com/frankhommers/autodesk-fusion-mcp/releases)
+   page.
+2. Extract the zip into your Fusion add-ins folder:
+   - **macOS:** `~/Library/Application Support/Autodesk/Autodesk Fusion 360/API/AddIns/`
+   - **Windows:** `%APPDATA%\Autodesk\Autodesk Fusion 360\API\AddIns\`
+3. Make sure the extracted folder is named `AutodeskFusionMCP` (rename it if
+   the zip extracts to a different name).
+4. Open Fusion, press **Shift+S**, select the **Add-Ins** tab, and run
+   **AutodeskFusionMCP**.
+5. The server listens on `http://127.0.0.1:8765/mcp`.
+
+### Option B: Clone from source
+
+1. Clone this repository into your Fusion add-ins folder:
+   - **macOS:** `~/Library/Application Support/Autodesk/Autodesk Fusion 360/API/AddIns/`
+   - **Windows:** `%APPDATA%\Autodesk\Autodesk Fusion 360\API\AddIns\`
+2. Make sure the directory is named `AutodeskFusionMCP`.
+3. Open Fusion, press **Shift+S**, select the **Add-Ins** tab, and run
+   **AutodeskFusionMCP**.
+4. The server listens on `http://127.0.0.1:8765/mcp`.
+
+## MCP Client Configuration
+
+Add to your MCP client config (Claude Desktop, Cursor, etc.):
+
+```json
+{
+  "mcpServers": {
+    "autodesk-fusion-mcp": {
+      "type": "http",
+      "url": "http://127.0.0.1:8765/mcp"
+    }
+  }
+}
+```
+
+## Tools
+
+| Tool | Description |
+|---|---|
+| `call_autodesk_api` | Execute a generic Fusion API call via dotted path |
+| `execute_python` | Run Python code inside the live Fusion session |
+| `capture_viewport` | PNG capture with temporary views, transparency, solid backgrounds and cropping |
+| `get_viewport` | Read camera state and viewport dimensions |
+| `set_viewport` | Standard views, projection, orbit, pan, zoom, fit and camera restoration |
+| `get_active_selection` | Get objects currently selected in the viewport |
+| `fetch_api_documentation` | Search Fusion API metadata via runtime introspection |
+| `fetch_online_documentation` | Fetch Autodesk cloudhelp docs for a class/member |
+| `fetch_design_guide` | Read the bundled design guide |
+| `save_script` | Save a reusable Python script |
+| `load_script` | Load a previously saved script |
+| `list_scripts` | List saved scripts with metadata |
+| `delete_script` | Delete a saved script |
+
+### Generic API example
+
+```json
+{
+  "api_path": "rootComponent.sketches.add",
+  "args": ["rootComponent.xYConstructionPlane"],
+  "remember_as": "my_sketch"
+}
+```
+
+Path shortcuts: `app`, `ui`, `design`, `rootComponent`, `$stored_name`.
+
+Constructors accepted in args: `Point3D`, `Vector3D`, `Point2D`,
+`ValueInput`, `ObjectCollection`, `Matrix3D`.
+
+### Selection example
+
+The `get_active_selection` tool returns details of objects selected in the
+viewport and stores them as `$selection_0`, `$selection_1`, etc. for use in
+follow-up API calls.
+
+## Architecture
+
+```
+AI agent
+  |  Streamable HTTP (POST/GET/DELETE /mcp)
+  v
+lib/mcp_server.py           -- HTTP server (threading, stdlib only)
+  |
+fusion_bridge/dispatch.py   -- Custom Event queue relay
+  |
+fusion_bridge/operations.py -- per-tool routing
+  |
+fusion_bridge/selection.py  -- viewport selection reader
+fusion_bridge/python_exec.py -- Python execution
+fusion_bridge/viewport.py   -- camera controls and viewport capture
+fusion_bridge/doc_lookup.py -- API docs introspection
+fusion_bridge/script_store.py -- script CRUD
+  |
+adsk.core / adsk.fusion     -- Fusion 360 SDK (main thread)
+```
+
+## Testing
+
+### Unit tests
+
+Run the test suite (no Fusion required):
+
+```
+python3 -m unittest discover -s tests
+```
+
+CI runs these tests on every push and pull request via GitHub Actions.
+Real HTTP tests cover both protocol eras, connection reuse, and cancellation
+without requiring Fusion. A live Fusion/client smoke test is still needed
+before releasing transport changes.
+
+### Protocol compliance with MCP Inspector
+
+The official [MCP Inspector](https://github.com/modelcontextprotocol/inspector)
+can verify Streamable HTTP compliance against a running server.
+
+**Against the live Fusion add-in** (port 8765):
+
+```
+npx @modelcontextprotocol/inspector --cli http://127.0.0.1:8765/mcp --transport http --method tools/list
+```
+
+**Against the standalone test server** (no Fusion required):
+
+```
+python3 test_server.py                  # starts a dummy server on port 9765
+npx @modelcontextprotocol/inspector --cli http://127.0.0.1:9765/mcp --transport http --method tools/list
+```
+
+## Reporting Issues
+
+Please report any issues on the [Issues](https://github.com/frankhommers/autodesk-fusion-mcp/issues) page.
+
+## Author
+
+Frank Hommers / [Initialize](https://initialize.nl)
+
+## License
+
+This project is licensed under the terms of the MIT license. See [LICENSE](LICENSE).
+
+## Changelog
+
+- v 1.4.1
+  - Wait for Fusion's main thread before binding the MCP server; bound
+    dispatcher waits and distinguish queued cancellation from running work
+  - Scope legacy cancellation by server, session, and request ID; retire
+    queued work and background startup tasks when the add-in stops
+  - Add regression coverage for cancellation isolation and Stop/Run races;
+    133 automated tests pass on Linux, macOS, and Windows
+
+- v 1.4.0
+  - Add `get_viewport` and `set_viewport`: camera snapshots, standard views,
+    projection, orbit, pan, zoom, and fit
+  - Extend `capture_viewport` with temporary views, transparent or solid
+    backgrounds, anti-aliasing control, native dimensions, and cropping
+  - Support MCP `2026-07-28` while retaining all three supported 2025
+    revisions on the same endpoint; persistent Python calls using the new
+    protocol require an explicit `session_id`
+  - Fix empty-response framing for HTTP keep-alive clients; validate browser
+    origins and scope modern cancellation to individual requests
+  - Log the Fusion and Python runtime versions; verify the bundled Autodesk
+    utilities against Fusion 2705.1.11
+  - Validate with 108 automated tests and 35 live viewport checks on macOS;
+    expand Python 3.14 CI to Linux, macOS, and Windows
+
+- v 1.3.0
+  - `fetch_online_documentation` returns a `preview` flag, so an agent can see
+    that a class is preview API before building on it. Autodesk renames these
+    between releases without a deprecation period
+  - Design guide: fixed every example, which wrapped its arguments in an
+    `operation` field that no tool accepts
+  - Design guide: new sections on preview APIs and on sheet metal ordering,
+    covering `foldFeatures`, `joinByBendFeatures`, `cornerClosureFeatures` and
+    flat patterns
+
+- v 1.2.0
+  - `fetch_online_documentation` now understands all three Autodesk help
+    layouts. Property pages contribute `property_type`, `access` and
+    `property_description`; class pages contribute their `methods`,
+    `properties` and `accessed_from` member lists
+  - Property syntax lines are recognised (they carry no argument list, and
+    Autodesk leaves the emphasis tag unclosed)
+  - Fixed every sample on a page inheriting the first sample's URL
+  - Fixed descriptions coming back empty, as Autodesk emits `<p class="api">`
+
+- v 1.1.0
+  - Negotiate the MCP protocol version instead of always answering
+    `2025-03-26`; `2025-11-25` and `2025-06-18` are now supported, which fixes
+    clients refusing to connect ([#1](https://github.com/frankhommers/autodesk-fusion-mcp/issues/1))
+  - Tolerate the `MCP-Protocol-Version` request header introduced in 2025-06-18
+  - `/health` now reports `supported_protocols`
+  - Fixed `fetch_online_documentation` silently dropping the `syntax` field
+    after Autodesk changed its help markup from `<strong>` to `<b>`
+  - Per-command execution duration and ISO 8601 timestamps in the log
+  - CI now runs on Python 3.14, matching the interpreter Fusion bundles
+
+- v 1.0.0
+  - Initial release
+  - 11 dedicated MCP tools with individual schemas
+  - Streamable HTTP transport (MCP spec 2025-03-26)
+  - Thread-safe main-thread dispatch
+  - Viewport selection reader (`get_active_selection`)
+  - Python code execution with persistent sessions
+  - API documentation introspection
+  - Script management (save/load/list/delete)
+  - Zero external dependencies
