@@ -21,6 +21,17 @@ class ToolSurfaceTests(unittest.TestCase):
         "fetch_online_documentation",
         "fetch_design_guide",
         "get_active_selection",
+        "fusion_status",
+        "list_documents",
+        "new_document",
+        "open_document",
+        "save_document",
+        "export_document",
+        "close_document",
+        "get_document_info",
+        "list_parameters",
+        "add_parameter",
+        "modify_parameter",
     }
 
     def test_all_expected_tools_present(self):

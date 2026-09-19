@@ -6,6 +6,7 @@ Free functions `build_object` and `format_result` are independent utilities.
 """
 
 import contextlib
+import json
 
 import adsk.core
 import adsk.fusion
@@ -236,3 +237,65 @@ coerce_arg = _default_ctx.coerce_arg
 
 def clear_object_store():
     return _default_ctx.clear()
+
+
+# ── MCP response envelopes ────────────────────────────────────────────────
+
+
+def success_result(payload):
+    """Wrap a JSON-serializable payload in a successful MCP tool response."""
+    return {"content": [{"type": "text", "text": json.dumps(payload, indent=2)}], "isError": False}
+
+
+def error_result(message):
+    """Wrap an explanatory message in an MCP tool error response."""
+    return {"content": [{"type": "text", "text": str(message)}], "isError": True}
+
+
+# ── Units convention ──────────────────────────────────────────────────────
+# Geometry/length values exchanged with the tools are plain numbers in
+# centimeters unless the caller passes ``units``.  Bare numbers are rescaled
+# on the way in; length/angle *expressions* ("25 mm", "width/2") are left
+# alone because the Fusion expression engine consumes them directly.
+
+LENGTH_UNITS = ("mm", "cm", "in", "m")
+CM_PER_UNIT = {"mm": 0.1, "cm": 1.0, "in": 2.54, "m": 100.0}
+
+
+def to_cm(value, units="cm"):
+    """Convert a bare length *value* given in *units* into centimeters."""
+    if units not in CM_PER_UNIT:
+        raise ValueError(f"units must be one of {', '.join(LENGTH_UNITS)}")
+    return float(value) * CM_PER_UNIT[units]
+
+
+def from_cm(value, units="cm"):
+    """Convert a length in centimeters into *units*."""
+    if units not in CM_PER_UNIT:
+        raise ValueError(f"units must be one of {', '.join(LENGTH_UNITS)}")
+    return float(value) / CM_PER_UNIT[units]
+
+
+def read_units(arguments):
+    """Read and validate the optional ``units`` argument (default ``"cm"``)."""
+    units = arguments.get("units", "cm")
+    if units is None:
+        return "cm"
+    if units not in CM_PER_UNIT:
+        raise ValueError(f"units must be one of {', '.join(LENGTH_UNITS)}")
+    return units
+
+
+def safe_get(obj, name, default=None):
+    """Read attribute *name* from *obj*, returning *default* on any failure.
+
+    Fusion SDK wrappers raise or return odd sentinels for unavailable members,
+    so every optional read in a tool handler goes through this.
+    """
+    if obj is None:
+        return default
+    try:
+        value = getattr(obj, name, default)
+    except Exception:
+        return default
+    return value

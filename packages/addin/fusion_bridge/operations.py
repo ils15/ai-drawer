@@ -11,6 +11,7 @@ from . import (
     viewport,
 )
 from .dispatch import log
+from .tools import documents, lifecycle, parameters
 
 # -- Wrapper helpers for handlers that take arguments directly ---------------
 
@@ -47,4 +48,15 @@ TOOL_HANDLERS = tool_surface.build_tool_handlers(
     fetch_online_documentation=_wrap_doc(doc_lookup.fetch_online_documentation),
     fetch_design_guide=_wrap_doc(doc_lookup.fetch_design_guide),
     get_active_selection=_wrap(selection.get_active_selection),
+    fusion_status=_wrap(lifecycle.fusion_status),
+    list_documents=_wrap(lifecycle.list_documents),
+    new_document=_wrap(documents.new_document),
+    open_document=_wrap(documents.open_document),
+    save_document=_wrap(documents.save_document),
+    export_document=_wrap(documents.export_document),
+    close_document=_wrap(documents.close_document),
+    get_document_info=_wrap(documents.get_document_info),
+    list_parameters=_wrap(parameters.list_parameters),
+    add_parameter=_wrap(parameters.add_parameter),
+    modify_parameter=_wrap(parameters.modify_parameter),
 )
