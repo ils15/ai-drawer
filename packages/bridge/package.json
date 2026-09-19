@@ -1,0 +1,60 @@
+{
+  "name": "ai-drawer-mcp",
+  "version": "0.1.0",
+  "description": "Stdio MCP bridge between LLM clients and the AutodeskFusionMCP add-in running inside Autodesk Fusion 360.",
+  "type": "module",
+  "license": "MIT",
+  "homepage": "https://github.com/frankhommers/autodesk-fusion-mcp#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/frankhommers/autodesk-fusion-mcp.git"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "fusion-360",
+    "autodesk",
+    "cad",
+    "bridge"
+  ],
+  "bin": {
+    "ai-drawer-mcp": "./dist/bin.js"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepare": "npm run build",
+    "prepublishOnly": "npm run build && npm run test",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "biome check src tests",
+    "format": "biome format --write src tests",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.14",
+    "@types/node": "^26.6.2",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.1"
+  }
+}

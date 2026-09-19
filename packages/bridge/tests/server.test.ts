@@ -1,0 +1,294 @@
+/**
+ * End-to-end server tests. The bridge is driven through a real SDK Client over
+ * a linked in-memory transport, so the full protocol path — initialize,
+ * tools/list, tools/call — is exercised exactly as OpenCode would exercise it.
+ */
+
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { resetSecuritySink, type SecurityEvent, setSecuritySink } from "../src/allowlist.js";
+import type { ResolvedHost } from "../src/config.js";
+import { resetResolvedHost } from "../src/config.js";
+import { createBridgeServer } from "../src/server.js";
+import { FakeAddin } from "./fake-addin.js";
+
+interface Harness {
+  bridge: Awaited<ReturnType<typeof createBridgeServer>>;
+  client: Client;
+  close: () => Promise<void>;
+}
+
+async function harness(): Promise<Harness> {
+  const bridge = await createBridgeServer();
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await bridge.server.connect(serverTransport);
+
+  const client = new Client({ name: "test-client", version: "1.0.0" }, { capabilities: {} });
+  await client.connect(clientTransport);
+
+  return {
+    bridge,
+    client,
+    close: async () => {
+      await client.close();
+      await bridge.close();
+    },
+  };
+}
+
+describe("bridge server", () => {
+  let addin: FakeAddin;
+  let events: SecurityEvent[] = [];
+  let envHost: string | undefined;
+  let envPort: string | undefined;
+
+  beforeEach(async () => {
+    addin = new FakeAddin({ mode: "json" });
+    await addin.start();
+    envHost = process.env.FUSION_MCP_HOST;
+    envPort = process.env.FUSION_MCP_PORT;
+    process.env.FUSION_MCP_HOST = "127.0.0.1";
+    process.env.FUSION_MCP_PORT = String(addin.port);
+    resetResolvedHost();
+    events = [];
+    setSecuritySink((event) => events.push(event));
+  });
+
+  afterEach(async () => {
+    resetSecuritySink();
+    if (envHost === undefined) delete process.env.FUSION_MCP_HOST;
+    else process.env.FUSION_MCP_HOST = envHost;
+    if (envPort === undefined) delete process.env.FUSION_MCP_PORT;
+    else process.env.FUSION_MCP_PORT = envPort;
+    resetResolvedHost();
+    await addin.close();
+  });
+
+  it("resolves the add-in endpoint from the environment", async () => {
+    const bridge = await createBridgeServer();
+    const endpoint: ResolvedHost = bridge.monitor.endpoint;
+    expect(endpoint.host).toBe("127.0.0.1");
+    expect(endpoint.port).toBe(addin.port);
+    expect(endpoint.source).toBe("env");
+  });
+
+  it("initializes once at startup and negotiates upstream", async () => {
+    const bridge = await createBridgeServer();
+    // The initialize is best-effort; give it a tick to land.
+    await delay(50);
+    const pings = addin.requests.filter((request) => request.body.includes('"initialize"'));
+    expect(pings.length).toBe(1);
+    bridge.close && (await bridge.close());
+  });
+
+  it("filters BLOCKED_HARD and pending tools out of tools/list", async () => {
+    const harness_ = await harness();
+    try {
+      const { tools }: { tools: Tool[] } = await harness_.client.listTools();
+      const names = tools.map((tool) => tool.name);
+
+      expect(names).not.toContain("execute_python");
+      expect(names).not.toContain("create_sketch");
+      expect(names).toContain("capture_viewport");
+      expect(names).toContain("fusion_health");
+      expect(events.some((event) => event.tool === "execute_python")).toBe(true);
+    } finally {
+      await harness_.close();
+    }
+  });
+
+  it("keeps the full Wave-1 surface visible", async () => {
+    const harness_ = await harness();
+    try {
+      const names = (await harness_.client.listTools()).tools.map((tool) => tool.name);
+      expect(names).toEqual(
+        expect.arrayContaining([
+          "capture_viewport",
+          "get_viewport",
+          "set_viewport",
+          "get_active_selection",
+          "fetch_api_documentation",
+          "fetch_online_documentation",
+          "fetch_design_guide",
+          "fusion_health",
+        ]),
+      );
+    } finally {
+      await harness_.close();
+    }
+  });
+
+  it("answers fusion_health locally and never forwards it", async () => {
+    const harness_ = await harness();
+    try {
+      const forwardedBefore = addin.forwardedCalls.length;
+      const result: CallToolResult = await harness_.client.callTool({ name: "fusion_health" });
+
+      expect(result.isError).not.toBe(true);
+      const report = JSON.parse((result.content[0] as { text: string }).text) as {
+        connected: boolean;
+        host: string;
+        port: number;
+        protocol_version: string | null;
+      };
+      expect(report.connected).toBe(true);
+      expect(report.host).toBe("127.0.0.1");
+      expect(report.port).toBe(addin.port);
+      expect(report.protocol_version).not.toBe(null);
+      expect(addin.forwardedCalls.length).toBe(forwardedBefore);
+    } finally {
+      await harness_.close();
+    }
+  });
+
+  it("rejects a blocked tool call with an isError result", async () => {
+    const harness_ = await harness();
+    try {
+      const result: CallToolResult = await harness_.client.callTool({
+        name: "execute_python",
+        arguments: { code: "print('pwned')" },
+      });
+
+      expect(result.isError).toBe(true);
+      expect((result.content[0] as { text: string }).text).toContain("execute_python");
+      expect(events.some((event) => event.tool === "execute_python")).toBe(true);
+    } finally {
+      await harness_.close();
+    }
+  });
+
+  it("rejects a pending Wave-3 tool", async () => {
+    const harness_ = await harness();
+    try {
+      const result: CallToolResult = await harness_.client.callTool({
+        name: "extrude",
+        arguments: { profile: "x" },
+      });
+      expect(result.isError).toBe(true);
+      expect((result.content[0] as { text: string }).text).toContain("extrude");
+    } finally {
+      await harness_.close();
+    }
+  });
+
+  it("rejects an unknown tool", async () => {
+    const harness_ = await harness();
+    try {
+      const result: CallToolResult = await harness_.client.callTool({
+        name: "definitely_not_a_tool",
+        arguments: {},
+      });
+      expect(result.isError).toBe(true);
+    } finally {
+      await harness_.close();
+    }
+  });
+
+  it("validates tool arguments with zod before forwarding", async () => {
+    const harness_ = await harness();
+    try {
+      const result: CallToolResult = await harness_.client.callTool({
+        name: "set_viewport",
+        arguments: { width: "wide" },
+      });
+      expect(result.isError).toBe(true);
+      const text = (result.content[0] as { text: string }).text;
+      expect(text).toContain("Invalid arguments");
+      expect(addin.forwardedCalls).not.toContain("set_viewport");
+    } finally {
+      await harness_.close();
+    }
+  });
+
+  it("forwards an allowed call and returns the tool result", async () => {
+    const harness_ = await harness();
+    try {
+      const result: CallToolResult = await harness_.client.callTool({
+        name: "capture_viewport",
+        arguments: {},
+      });
+      expect(result.isError).not.toBe(true);
+      expect((result.content[0] as { text: string }).text).toBe("called capture_viewport");
+      expect(addin.forwardedCalls).toContain("capture_viewport");
+    } finally {
+      await harness_.close();
+    }
+  });
+
+  it("maps a JSON-RPC tool error onto tier (b)", async () => {
+    const port = addin.port;
+    await addin.close();
+    addin = new FakeAddin({ mode: "json", port, failToolCalls: true });
+    await addin.start();
+    resetResolvedHost();
+
+    const harness_ = await harness();
+    try {
+      const result: CallToolResult = await harness_.client.callTool({
+        name: "capture_viewport",
+        arguments: {},
+      });
+      expect(result.isError).toBe(true);
+      expect((result.content[0] as { text: string }).text).toContain("failed (code -32603)");
+    } finally {
+      await harness_.close();
+    }
+  });
+
+  it("maps an unreachable add-in onto tier (c) with actionable text", async () => {
+    const port = addin.port;
+    await addin.close();
+    resetResolvedHost();
+
+    const harness_ = await harness();
+    try {
+      const result: CallToolResult = await harness_.client.callTool({
+        name: "capture_viewport",
+        arguments: {},
+      });
+      expect(result.isError).toBe(true);
+      const text = (result.content[0] as { text: string }).text;
+      expect(text).toContain(`Fusion 360 is not reachable at 127.0.0.1:${port}`);
+      expect(text).toContain("AutodeskFusionMCP");
+      expect(text).toContain("FUSION_MCP_HOST");
+    } finally {
+      await harness_.close();
+    }
+  });
+
+  it("still lists fusion_health when the add-in is down", async () => {
+    await addin.close();
+    resetResolvedHost();
+
+    const harness_ = await harness();
+    try {
+      const names = (await harness_.client.listTools()).tools.map((tool) => tool.name);
+      expect(names).toEqual(["fusion_health"]);
+    } finally {
+      await harness_.close();
+    }
+  });
+
+  it("offers the same tools over an SSE-framed add-in", async () => {
+    const port = addin.port;
+    await addin.close();
+    addin = new FakeAddin({ mode: "sse", port });
+    await addin.start();
+    resetResolvedHost();
+
+    const harness_ = await harness();
+    try {
+      const names = (await harness_.client.listTools()).tools.map((tool) => tool.name);
+      expect(names).toContain("capture_viewport");
+      expect(names).not.toContain("execute_python");
+    } finally {
+      await harness_.close();
+    }
+  });
+});
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
