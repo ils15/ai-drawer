@@ -27,6 +27,7 @@ import { ALLOWED, BLOCKED_HARD, HEALTH_TOOL, PENDING } from "../src/allowlist.js
 // introspect the live schemas the bridge actually validates with.
 import { TOOL_ARGS } from "../src/server.js";
 import artifact from "./contract/addin-tool-surface.json";
+import { generateArtifactText } from "./contract/generate.mjs";
 
 interface ArtifactTool {
   name: string;
@@ -239,6 +240,14 @@ it("keeps the bridge in sync with the add-in contract artifact", () => {
   expect(artifact.tools).toHaveLength(18);
   assertSurfaceInSync();
 });
+
+it("keeps the committed contract artifact generated from the live add-in source", () => {
+  const regenerated = JSON.parse(generateArtifactText()) as unknown;
+  expect(
+    normalize(regenerated),
+    "Add-in contract artifact drifted; run `node packages/bridge/tests/contract/generate.mjs` from the repo root (or `node tests/contract/generate.mjs` from packages/bridge).",
+  ).toStrictEqual(normalize(artifact));
+}, 30_000);
 
 it("reports the expected tool count through the live allowlist", () => {
   // 18 add-in tools + the bridge-owned health probe.

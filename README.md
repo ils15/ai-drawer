@@ -10,15 +10,26 @@ two-party pipeline: a TypeScript bridge (`packages/bridge`, stdio MCP →
 Streamable HTTP) talks to a Python add-in (`packages/addin`) that runs *inside*
 Fusion and dispatches every `adsk.*` call onto the Fusion main thread.
 
-**What works today:** inspecting and driving an open Fusion document — viewport
-capture and control, active selection, and documentation lookup. Seven tools.
+**What works today:** inspecting and driving an open Fusion document through a
+curated surface of **19 safe tools**: 18 add-in tools plus the local
+`fusion_health` probe.
 
-**What does not work yet: creating CAD geometry from natural language.** That is
-the point of the project, and it is not there. Geometry creation is a later wave;
-until then the tool surface is intentionally small and curated. If you are here
-for "describe a part and get CAD," this project is not ready for you yet. Track
-progress in [docs/drawing-api-status.md](docs/drawing-api-status.md) (coming
-later).
+The add-in tools are grouped as follows:
+
+- **Inherited viewport/selection/docs:** `capture_viewport`, `get_viewport`,
+  `set_viewport`, `get_active_selection`, `fetch_api_documentation`,
+  `fetch_online_documentation`, `fetch_design_guide`
+- **Lifecycle/documents:** `fusion_status`, `new_document`, `open_document`,
+  `close_document`, `save_document`, `export_document`, `list_documents`,
+  `get_document_info`
+- **Parameters:** `add_parameter`, `list_parameters`, `modify_parameter`
+
+Wave-3 tools are not exposed yet.
+
+**What does not work yet: creating CAD geometry from natural language.** CAD
+geometry tools are not shipped yet. The next phase adds sketch and feature
+tools; meanwhile, a smoke-test harness exercises the real Fusion integration
+([smoke-test docs](packages/addin/tests/smoke/README.md)).
 
 We would rather you know that now than discover it after installing.
 
@@ -38,16 +49,10 @@ in OpenCode. WSL networking has one wrinkle worth understanding — see
 ## Security
 
 The tool surface is **curated, and deliberately has no arbitrary code execution**.
-This build removed the upstream tools that made it possible:
-
-- `execute_python` — arbitrary Python execution inside Fusion (an RCE vector)
-- `call_autodesk_api` — a generic dotted-path API caller
-- the user-script store (`save_script`, `load_script`, `list_scripts`,
-  `delete_scripts`)
-
-What remains is a small set of named, capability-oriented tools, each with a
-fixed schema. An LLM can drive Fusion through those tools; it cannot make Fusion
-run arbitrary code.
+`execute_python` is not exposed, and neither are generic API callers or
+user-script storage tools. The available tools are named, capability-oriented,
+and use fixed schemas; an LLM can drive Fusion through them but cannot make
+Fusion run arbitrary code.
 
 The HTTP endpoint itself is unauthenticated and binds to loopback
 (`127.0.0.1:8765`) by default. Non-loopback binding is possible — necessary for
@@ -61,8 +66,7 @@ MIT. See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md).
 The add-in is a derivative of **Frank Hommers'** MIT-licensed
 [`autodesk-fusion-mcp`](https://github.com/frankhommers/autodesk-fusion-mcp)
 (v1.4.1); upstream commits retain their original authorship. The upstream sync
-procedure — including the one merge command that works and the one that silently
-drops files — is in [docs/UPSTREAM-MERGE.md](docs/UPSTREAM-MERGE.md).
+procedure is documented in [docs/UPSTREAM-MERGE.md](docs/UPSTREAM-MERGE.md).
 
 ## Repository layout
 

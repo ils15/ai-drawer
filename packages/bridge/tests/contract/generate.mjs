@@ -44,14 +44,6 @@ json.dump({"generated_from": "packages/addin/fusion_bridge/tool_surface.py",
 sys.stdout.write("\\n")
 `;
 
-const result = spawnSync("python3", ["-c", script], { encoding: "utf8", maxBuffer: 1 << 26 });
-if (result.error !== undefined) {
-  throw new Error(`failed to run python3: ${result.error.message}`);
-}
-if (result.status !== 0) {
-  throw new Error(`python3 exited ${result.status}: ${result.stderr}`);
-}
-
 /** Verifies the generated blob before it is committed. */
 function validate(text) {
   const parsed = JSON.parse(text);
@@ -61,7 +53,25 @@ function validate(text) {
   if (dupes.length > 0) throw new Error(`duplicate tool names in artifact: ${dupes.join(", ")}`);
 }
 
-const text = result.stdout;
-validate(text);
-writeFileSync(artifact, text);
-console.log(`wrote ${artifact} (${JSON.parse(text).tools.length} tools)`);
+/**
+ * Generates the contract from the live add-in source without writing a file.
+ * Tests use this function so they can compare against a temporary in-memory
+ * result instead of mutating the committed artifact.
+ */
+export function generateArtifactText() {
+  const result = spawnSync("python3", ["-c", script], { encoding: "utf8", maxBuffer: 1 << 26 });
+  if (result.error !== undefined) {
+    throw new Error(`failed to run python3: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    throw new Error(`python3 exited ${result.status}: ${result.stderr}`);
+  }
+  validate(result.stdout);
+  return result.stdout;
+}
+
+if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const text = generateArtifactText();
+  writeFileSync(artifact, text);
+  console.log(`wrote ${artifact} (${JSON.parse(text).tools.length} tools)`);
+}

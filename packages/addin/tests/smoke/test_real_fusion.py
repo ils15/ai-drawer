@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
+import subprocess
 import time
 import urllib.error
 import urllib.request
@@ -110,7 +112,7 @@ def _write_report(config: pytest.Config) -> None:
         "|---|---|---:|---|",
     ]
     for name, status, elapsed, reason in records:
-        lines.append(f"| {name} | {status} | {elapsed:.3f} | {reason.replace('|', '/') } |")
+        lines.append(f"| {name} | {status} | {elapsed:.3f} | {reason.replace('|', '/')} |")
     _REPORT.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -129,7 +131,7 @@ def fusion_mcp(request: pytest.FixtureRequest) -> SmokeClient:
     started = time.monotonic()
     try:
         client.request("tools/list")
-    except (OSError, urllib.error.URLError, ValueError, RuntimeError) as exc:
+    except (OSError, urllib.error.URLError, TimeoutError) as exc:
         _record(
             request.config,
             "MCP endpoint connection",
@@ -138,6 +140,9 @@ def fusion_mcp(request: pytest.FixtureRequest) -> SmokeClient:
             f"Fusion/add-in unreachable: {exc}",
         )
         pytest.skip(f"Fusion MCP endpoint unreachable at {url}: {exc}")
+    except Exception as exc:
+        _record(request.config, "MCP endpoint connection", "FAIL", time.monotonic() - started, repr(exc))
+        raise
     _record(request.config, "MCP endpoint connection", "PASS", time.monotonic() - started)
     return client
 
@@ -148,12 +153,93 @@ def _check(request: pytest.FixtureRequest, name: str, operation) -> dict:
         result = operation()
     except RuntimeError as exc:
         message = str(exc)
-        _record(request.config, name, "SKIP", time.monotonic() - started, message)
-        pytest.skip(f"{name}: {message}")
+        if _environment_unavailable(message):
+            _record(request.config, name, "SKIP", time.monotonic() - started, message)
+            pytest.skip(f"{name}: {message}")
+        _record(request.config, name, "FAIL", time.monotonic() - started, repr(exc))
+        raise
     except Exception as exc:
         _record(request.config, name, "FAIL", time.monotonic() - started, repr(exc))
         raise
     _record(request.config, name, "PASS", time.monotonic() - started)
+    return result
+
+
+def _environment_unavailable(message: str) -> bool:
+    """Return whether a tool error names an explicitly unavailable fixture."""
+    normalized = message.casefold()
+    return any(
+        phrase in normalized
+        for phrase in (
+            "fusion endpoint not reachable",
+            "fusion/add-in unreachable",
+            "fusion 360 is not reachable",
+            "bridge stdio endpoint unavailable",
+            "add-in not running",
+            "fusion add-in not running",
+            "missing live fusion fixture",
+            "no live fusion fixture",
+            "no active fusion document",
+            "no active viewport",
+        )
+    )
+
+
+def _bridge_stdio_call() -> dict:
+    """Call the bridge-owned read-only health tool through its stdio transport."""
+    repo_root = Path(__file__).resolve().parents[4]
+    default_command = ["node", str(repo_root / "packages" / "bridge" / "dist" / "bin.js")]
+    command = (
+        shlex.split(os.environ["FUSION_BRIDGE_COMMAND"]) if os.environ.get("FUSION_BRIDGE_COMMAND") else default_command
+    )
+    request_data = (
+        "\n".join(
+            json.dumps(message)
+            for message in (
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": _PROTOCOL,
+                        "capabilities": {},
+                        "clientInfo": {"name": "fusion-smoke", "version": "1.0"},
+                    },
+                },
+                {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "tools/call",
+                    "params": {"name": "fusion_health", "arguments": {}},
+                },
+            )
+        )
+        + "\n"
+    )
+    try:
+        completed = subprocess.run(
+            command,
+            input=request_data,
+            capture_output=True,
+            text=True,
+            timeout=float(os.environ.get("FUSION_SMOKE_TIMEOUT", "20")),
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(f"Fusion bridge stdio endpoint unavailable: {exc}") from exc
+    responses = [json.loads(line) for line in completed.stdout.splitlines() if line.strip()]
+    response = next((item for item in responses if item.get("id") == 2), None)
+    if not isinstance(response, dict):
+        detail = completed.stderr.strip() or "no response from bridge stdio endpoint"
+        raise RuntimeError(f"Fusion bridge stdio endpoint unavailable: {detail}")
+    if "error" in response:
+        raise RuntimeError(str(response["error"].get("message", response["error"])))
+    result = response.get("result")
+    if not isinstance(result, dict):
+        raise RuntimeError("Fusion bridge returned a malformed health response")
+    if result.get("isError"):
+        raise RuntimeError(_result_text(result))
     return result
 
 
@@ -217,5 +303,5 @@ def test_documentation_lookup(fusion_mcp: SmokeClient, request: pytest.FixtureRe
 
 def test_wsl_bridge_read_only_leg(fusion_mcp: SmokeClient, request: pytest.FixtureRequest) -> None:
     """Exercise the local WSL-to-Windows leg without mutating Fusion state."""
-    result = _check(request, "WSL bridge read-only fusion_status", lambda: fusion_mcp.call("fusion_status"))
+    result = _check(request, "WSL bridge stdio fusion_health", _bridge_stdio_call)
     assert isinstance(result, dict)
