@@ -13,17 +13,24 @@
  *  - PENDING is documentation-only. It is NOT consulted to admit a call.
  */
 
-/** Bridge-owned health probe; answered locally, never forwarded upstream. */
+/**
+ * Bridge-owned health probe; answered locally, never forwarded upstream.
+ */
 export const HEALTH_TOOL = "fusion_health" as const;
 
 /**
- * Wave-1 reduced surface: the viewport / selection / documentation tools the
- * add-in serves today, plus the bridge-owned health probe.
+ * The live curated surface: every tool the add-in serves today (Wave-1
+ * viewport/selection/documentation plus the Wave-2 lifecycle, document and
+ * parameter tools), together with the bridge-owned health probe.
  *
- * To enable a Wave-3 tool, move its name out of PENDING into this set.
- * Nothing else in the codebase needs to change.
+ * This set is kept in lockstep with the add-in's tool_surface.py by the
+ * cross-package drift guard in tests/drift-guard.test.ts, which reads the
+ * committed contract artifact in tests/contract/. Enabling a Wave-3 tool is a
+ * one-line change: move its name out of PENDING into this set (and give it a
+ * TOOL_ARGS entry in server.ts). Nothing else needs to change.
  */
 export const ALLOWED: ReadonlySet<string> = new Set<string>([
+  // Wave-1: viewport, selection, documentation.
   "capture_viewport",
   "get_viewport",
   "set_viewport",
@@ -31,6 +38,19 @@ export const ALLOWED: ReadonlySet<string> = new Set<string>([
   "fetch_api_documentation",
   "fetch_online_documentation",
   "fetch_design_guide",
+  // Wave-2: lifecycle, documents, parameters.
+  "add_parameter",
+  "close_document",
+  "export_document",
+  "fusion_status",
+  "get_document_info",
+  "list_documents",
+  "list_parameters",
+  "modify_parameter",
+  "new_document",
+  "open_document",
+  "save_document",
+  // Bridge-owned; never forwarded to the add-in.
   HEALTH_TOOL,
 ]);
 
@@ -38,20 +58,20 @@ export const ALLOWED: ReadonlySet<string> = new Set<string>([
  * Wave-3 CAD tool names the add-in does not serve yet. Listed so that
  * enabling them later is a one-line change and so reviewers can see the
  * roadmap. Deliberately NOT callable today.
+ *
+ * Every add-in tool MUST be classified exactly once here, in ALLOWED, or in
+ * BLOCKED_HARD — the drift guard fails the build on an orphan (classified
+ * nowhere) or a phantom (classified but not served by the add-in).
  */
 export const PENDING: readonly string[] = [
+  "apply_material",
+  "create_body",
+  "create_component",
   "create_sketch",
   "extrude",
   "fillet",
   "hole",
-  "list_parameters",
-  "modify_parameter",
-  "create_component",
-  "create_body",
   "revolve",
-  "apply_material",
-  "export_document",
-  "save_document",
 ];
 
 /**
@@ -78,7 +98,7 @@ export interface GateDecision {
   readonly reason?: DenyReason;
 }
 
-/** True only for names on the Wave-1 surface. */
+/** True only for names on the curated (live) surface. */
 export function isAllowed(name: string): boolean {
   return ALLOWED.has(name);
 }
@@ -92,7 +112,7 @@ export function isHardBlocked(name: string): boolean {
  * The tools/call gate. Consult this for EVERY incoming tool call before doing
  * anything else with the arguments.
  *
- * Returns `{allowed: true}` for the Wave-1 surface, otherwise a refusal
+ * Returns `{allowed: true}` for the curated surface, otherwise a refusal
  * carrying the deny reason. Refusals are recorded as security events.
  */
 export function gateToolCall(name: string): GateDecision {

@@ -1,0 +1,572 @@
+{
+  "generated_from": "packages/addin/fusion_bridge/tool_surface.py",
+  "tools": [
+    {
+      "name": "capture_viewport",
+      "description": "Capture the active Fusion viewport as a PNG. Optional view and fit are temporary: the original camera is restored even on failure. Background can be viewport, transparent, or #RRGGBB. Crop uses pixels in the rendered image, origin top-left. Returns only the cropped region when crop is provided; limit 16 megapixels.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "width": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 8192,
+            "description": "Rendered image width in pixels (default: 800; 0 uses viewport width)"
+          },
+          "height": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 8192,
+            "description": "Rendered image height in pixels (default: 600; 0 uses viewport height)"
+          },
+          "view": {
+            "type": "string",
+            "enum": [
+              "front",
+              "back",
+              "left",
+              "right",
+              "top",
+              "bottom",
+              "isometric",
+              "iso_top_left",
+              "iso_top_right",
+              "iso_bottom_left",
+              "iso_bottom_right"
+            ],
+            "description": "Temporary ViewCube-relative standard view; omit to keep current view."
+          },
+          "fit": {
+            "type": "boolean",
+            "description": "Temporarily fit all graphics before capture (default: false)."
+          },
+          "background": {
+            "type": "string",
+            "description": "viewport (default), transparent, or a solid #RRGGBB color."
+          },
+          "anti_aliasing": {
+            "type": "boolean",
+            "description": "Smooth rendered edges (default: true)."
+          },
+          "crop": {
+            "type": "object",
+            "description": "Rectangle inside the rendered image; output dimensions equal crop width/height.",
+            "properties": {
+              "x": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 8192
+              },
+              "y": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 8192
+              },
+              "width": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8192
+              },
+              "height": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8192
+              }
+            },
+            "required": [
+              "x",
+              "y",
+              "width",
+              "height"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "name": "get_viewport",
+      "description": "Read active viewport pixel dimensions and camera eye, target, up_vector, projection, and extents or perspective_angle. Lengths are cm and angles degrees. Pass the returned camera object to set_viewport to restore it. All clients share this viewport.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "set_viewport",
+      "description": "Control the active Fusion camera. Changes apply in order: projection/view, fit, orbit, pan, zoom. Standard views follow the user's ViewCube orientation. Orbit angles use right-hand rotation: yaw about camera up, pitch about camera right, roll about the viewing direction. Pan translates the camera along screen right/up in cm. Zoom >1 zooms in; <1 zooms out. Alternatively pass a complete camera snapshot alone. Returns actual camera state. This changes the shared viewport for all clients, without modifying model geometry.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "camera": {
+            "type": "object",
+            "description": "Camera snapshot from get_viewport. Coordinates/extents in cm; perspective_angle in degrees. Use alone to restore a camera.",
+            "properties": {
+              "eye": {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "number",
+                    "minimum": -1000000000000.0,
+                    "maximum": 1000000000000.0
+                  },
+                  "y": {
+                    "type": "number",
+                    "minimum": -1000000000000.0,
+                    "maximum": 1000000000000.0
+                  },
+                  "z": {
+                    "type": "number",
+                    "minimum": -1000000000000.0,
+                    "maximum": 1000000000000.0
+                  }
+                },
+                "required": [
+                  "x",
+                  "y",
+                  "z"
+                ],
+                "additionalProperties": false
+              },
+              "target": {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "number",
+                    "minimum": -1000000000000.0,
+                    "maximum": 1000000000000.0
+                  },
+                  "y": {
+                    "type": "number",
+                    "minimum": -1000000000000.0,
+                    "maximum": 1000000000000.0
+                  },
+                  "z": {
+                    "type": "number",
+                    "minimum": -1000000000000.0,
+                    "maximum": 1000000000000.0
+                  }
+                },
+                "required": [
+                  "x",
+                  "y",
+                  "z"
+                ],
+                "additionalProperties": false
+              },
+              "up_vector": {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "number",
+                    "minimum": -1000000000000.0,
+                    "maximum": 1000000000000.0
+                  },
+                  "y": {
+                    "type": "number",
+                    "minimum": -1000000000000.0,
+                    "maximum": 1000000000000.0
+                  },
+                  "z": {
+                    "type": "number",
+                    "minimum": -1000000000000.0,
+                    "maximum": 1000000000000.0
+                  }
+                },
+                "required": [
+                  "x",
+                  "y",
+                  "z"
+                ],
+                "additionalProperties": false
+              },
+              "projection": {
+                "type": "string",
+                "enum": [
+                  "orthographic",
+                  "perspective",
+                  "perspective_with_ortho_faces"
+                ]
+              },
+              "extents": {
+                "type": "object",
+                "description": "Required for orthographic cameras only, in cm.",
+                "properties": {
+                  "width": {
+                    "type": "number",
+                    "minimum": 1e-09,
+                    "maximum": 1000000000000.0
+                  },
+                  "height": {
+                    "type": "number",
+                    "minimum": 1e-09,
+                    "maximum": 1000000000000.0
+                  }
+                },
+                "required": [
+                  "width",
+                  "height"
+                ],
+                "additionalProperties": false
+              },
+              "perspective_angle": {
+                "type": "number",
+                "minimum": 0.01,
+                "maximum": 179,
+                "description": "Required for perspective cameras only; angle in degrees."
+              }
+            },
+            "required": [
+              "eye",
+              "target",
+              "up_vector",
+              "projection"
+            ],
+            "additionalProperties": false
+          },
+          "view": {
+            "type": "string",
+            "enum": [
+              "front",
+              "back",
+              "left",
+              "right",
+              "top",
+              "bottom",
+              "isometric",
+              "iso_top_left",
+              "iso_top_right",
+              "iso_bottom_left",
+              "iso_bottom_right"
+            ]
+          },
+          "projection": {
+            "type": "string",
+            "enum": [
+              "orthographic",
+              "perspective",
+              "perspective_with_ortho_faces"
+            ]
+          },
+          "fit": {
+            "type": "boolean",
+            "description": "Fit all graphics (default: false)."
+          },
+          "orbit": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "yaw": {
+                "type": "number",
+                "minimum": -360,
+                "maximum": 360
+              },
+              "pitch": {
+                "type": "number",
+                "minimum": -360,
+                "maximum": 360
+              },
+              "roll": {
+                "type": "number",
+                "minimum": -360,
+                "maximum": 360
+              }
+            }
+          },
+          "pan": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "x": {
+                "type": "number",
+                "minimum": -1000000000.0,
+                "maximum": 1000000000.0
+              },
+              "y": {
+                "type": "number",
+                "minimum": -1000000000.0,
+                "maximum": 1000000000.0
+              }
+            }
+          },
+          "zoom": {
+            "type": "number",
+            "minimum": 0.01,
+            "maximum": 100
+          },
+          "description": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "fetch_api_documentation",
+      "description": "Search live Fusion API metadata through runtime introspection. Returns scored results with class overviews, properties, and function signatures.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "search_term": {
+            "type": "string",
+            "description": "Search term (e.g. 'BRepBody', 'sketches', 'adsk.fusion.Sketch.add')"
+          },
+          "category": {
+            "type": "string",
+            "description": "Search category: class_name, member_name, description, or all"
+          },
+          "max_results": {
+            "type": "integer",
+            "description": "Maximum number of results (default: 3)"
+          }
+        },
+        "required": [
+          "search_term"
+        ]
+      }
+    },
+    {
+      "name": "fetch_online_documentation",
+      "description": "Fetch Autodesk cloudhelp documentation for a specific Fusion API class or member.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "class_name": {
+            "type": "string",
+            "description": "API class name (e.g. 'BRepBody', 'Sketch')"
+          },
+          "member_name": {
+            "type": "string",
+            "description": "Optional member name (e.g. 'add', 'name')"
+          }
+        },
+        "required": [
+          "class_name"
+        ]
+      }
+    },
+    {
+      "name": "fetch_design_guide",
+      "description": "Read the bundled Fusion design guide with workflow guidance, API patterns, naming rules, and modeling habits.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "get_active_selection",
+      "description": "Get the objects currently selected by the user in the Fusion 360 viewport. Returns detailed info per item (type, name, entityToken, parent component, and type-specific properties like area, volume, material).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "fusion_status",
+      "description": "Report the state of the running Fusion: version, active document name, modified flag, design units, design type (parametric or direct), active workspace, timeline feature count, and how long this add-in has been running. Works with no document open; document fields are then null. Use this first to learn what you are working with.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_documents",
+      "description": "List every document currently open in Fusion, with name, active flag, modified flag, design type, and saved path (null when never saved). Use fusion_status for the active document's deeper detail.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "new_document",
+      "description": "Create and activate a new Fusion design document with the given name. The optional design_type selects parametric (timeline history, default) or direct (history-free) modeling; switching to direct removes the timeline. Returns the document name and the design type that was applied.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name for the new document."
+          },
+          "design_type": {
+            "type": "string",
+            "enum": [
+              "parametric",
+              "direct"
+            ],
+            "description": "Parametric (default) keeps a timeline; direct is history-free."
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    },
+    {
+      "name": "open_document",
+      "description": "Open a previously saved Fusion file (.f3d, .f3z, .step, .iges, .smt, .sat, .dwg, ...) by path and activate it. Returns the document name and its modified flag. The path is passed to Fusion's open; local file paths are supported.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Path of the file to open."
+          }
+        },
+        "required": [
+          "path"
+        ]
+      }
+    },
+    {
+      "name": "save_document",
+      "description": "Save the active document. Omit path to save in place (fails with a clear error if the document has never been saved). Provide path to save-as, which also works for a never-saved document; the path's folder is used as the save location and its file name as the document name. Returns the resulting saved path.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Save-as target; omit to save the existing file in place."
+          }
+        }
+      }
+    },
+    {
+      "name": "export_document",
+      "description": "Export the active design to step, stl, f3d, iges, obj, or pdf, writing to the given path and reporting the file size in bytes. Requires an active design; returns a clear error otherwise. For stl, stl_density maps to mesh refinement (low/medium/high, default medium) and stl_units selects the units the unitless STL numbers represent (default: the design's units). Not every Fusion build can emit every format; unsupported combinations are reported rather than silently ignored.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "format": {
+            "type": "string",
+            "enum": [
+              "step",
+              "stl",
+              "f3d",
+              "iges",
+              "obj",
+              "pdf"
+            ],
+            "description": "Export format."
+          },
+          "path": {
+            "type": "string",
+            "description": "Output file path."
+          },
+          "stl_density": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ],
+            "description": "STL mesh refinement (default: medium)."
+          },
+          "stl_units": {
+            "type": "string",
+            "enum": [
+              "mm",
+              "cm",
+              "in",
+              "m"
+            ],
+            "description": "Units the unitless STL numbers represent (default: design units)."
+          }
+        },
+        "required": [
+          "format",
+          "path"
+        ]
+      }
+    },
+    {
+      "name": "close_document",
+      "description": "Close the active document, or the one named by document_name. Set save true to persist changes first (the document must already have a save location; otherwise save it with save_document first). Unsaved changes are discarded when save is false or omitted. Returns closed: true/false.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "document_name": {
+            "type": "string",
+            "description": "Document to close; omit for the active one."
+          },
+          "save": {
+            "type": "boolean",
+            "description": "Save in place before closing (default: false)."
+          }
+        }
+      }
+    },
+    {
+      "name": "get_document_info",
+      "description": "Report the active document's name, saved path, default length units, design type, modified flag, and version. Returns a clear error when no document is open.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_parameters",
+      "description": "List every user and model parameter in the active design. Each entry carries name, expression (Fusion expression string, e.g. \"25 mm\" or \"width / 2\"), unit, value (the evaluated number; lengths are in the parameter's internal centimeter units), parameter_type (user or model), and driven (true when the model computes the value).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "add_parameter",
+      "description": "Add a user parameter to the active design. The expression is a Fusion expression string (\"3 mm\", \"width/2\", \"45 deg\") and is consumed by the expression engine, so units inside it are honored. The optional unit string (default mm) labels the parameter. Fails with a clear error on a duplicate name or an invalid expression.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Parameter name; must be unique."
+          },
+          "expression": {
+            "type": "string",
+            "description": "Fusion expression, e.g. \"3 mm\" or \"width/2\"."
+          },
+          "unit": {
+            "type": "string",
+            "description": "Parameter unit label (default: mm)."
+          }
+        },
+        "required": [
+          "name",
+          "expression"
+        ]
+      }
+    },
+    {
+      "name": "modify_parameter",
+      "description": "Change an existing parameter's expression and recompute the model in one pass \u2014 the cheapest edit path. Returns the new expression, its evaluated value, whether a recompute ran, and recomputed_feature_count (features that re-evaluated; null when the running Fusion cannot report it). Use this to drive dimensions instead of recreating geometry.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Existing parameter name."
+          },
+          "expression": {
+            "type": "string",
+            "description": "New Fusion expression, e.g. \"40 mm\" or \"height * 2\"."
+          }
+        },
+        "required": [
+          "name",
+          "expression"
+        ]
+      }
+    }
+  ]
+}

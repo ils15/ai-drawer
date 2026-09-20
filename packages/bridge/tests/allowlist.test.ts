@@ -14,29 +14,66 @@ import {
 } from "../src/allowlist.js";
 
 describe("allowlist", () => {
-  it("exposes the reduced Wave-1 surface plus the bridge-owned health probe", () => {
+  it("exposes the live surface plus the bridge-owned health probe", () => {
     expect([...ALLOWED].sort()).toEqual(
       [
+        "add_parameter",
         "capture_viewport",
+        "close_document",
+        "export_document",
         "fetch_api_documentation",
         "fetch_design_guide",
         "fetch_online_documentation",
         "fusion_health",
+        "fusion_status",
         "get_active_selection",
+        "get_document_info",
         "get_viewport",
+        "list_documents",
+        "list_parameters",
+        "modify_parameter",
+        "new_document",
+        "open_document",
+        "save_document",
         "set_viewport",
       ].sort(),
     );
   });
 
-  it("keeps the Wave-3 CAD surface in PENDING, not in ALLOWED", () => {
-    expect(PENDING).toContain("create_sketch");
-    expect(PENDING).toContain("extrude");
-    expect(PENDING).toContain("fillet");
-    expect(PENDING).toContain("hole");
-    expect(PENDING).toContain("list_parameters");
-    expect(PENDING).toContain("modify_parameter");
+  it("keeps the genuine Wave-3 CAD surface in PENDING, not in ALLOWED", () => {
+    expect(PENDING).toEqual(
+      [
+        "apply_material",
+        "create_body",
+        "create_component",
+        "create_sketch",
+        "extrude",
+        "fillet",
+        "hole",
+        "revolve",
+      ].sort(),
+    );
     for (const name of PENDING) expect(ALLOWED.has(name)).toBe(false);
+  });
+
+  it("promoted the Wave-2 lifecycle, document and parameter tools out of PENDING", () => {
+    const wave2 = [
+      "fusion_status",
+      "list_documents",
+      "new_document",
+      "open_document",
+      "save_document",
+      "export_document",
+      "close_document",
+      "get_document_info",
+      "list_parameters",
+      "add_parameter",
+      "modify_parameter",
+    ];
+    for (const name of wave2) {
+      expect(ALLOWED.has(name)).toBe(true);
+      expect(PENDING.includes(name)).toBe(false);
+    }
   });
 
   it("lists the raw-capability names that must never be proxied", () => {

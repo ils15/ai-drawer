@@ -21,3 +21,14 @@ extend-exclude = [
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+# Smoke tests need a real Fusion 360 process reachable from this machine, and
+# network tests hit live Autodesk documentation.  Neither belongs in a normal
+# offline CI run, so both markers are opted out of by default; run them
+# explicitly with `pytest -m smoke` / `pytest -m network`.
+addopts = "-m \"not smoke and not network\""
+markers = [
+    "smoke: per-tool happy paths against a real Fusion 360 process (requires the add-in running)",
+    "network: live Autodesk reference documentation cross-check (hits help.autodesk.com)",
+]

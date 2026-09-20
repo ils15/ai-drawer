@@ -44,21 +44,298 @@ const CALL_TIMEOUT_MS = 60_000;
 const LIST_TIMEOUT_MS = 15_000;
 
 /**
- * zod argument schemas for the Wave-1 tools. These enforce only what the
- * bridge forwards; the add-in validates against its own contracts too.
- * Enabling a Wave-3 tool means adding one entry here AND one name to ALLOWED.
+ * zod argument schemas for the whole live surface. These mirror the add-in's
+ * tool_surface.py one-to-one: every property, required flag, enum, bound and
+ * description is transcribed from it, and the cross-package drift guard in
+ * tests/drift-guard.test.ts fails the build if the two ever diverge.
+ *
+ * Conventions, imposed by the add-in's own schema vocabulary
+ * (OwnedSchemaTests in the add-in test suite):
+ *  - plain z.string(), never .min(1). Empty-string rejection happens in the
+ *    add-in handler, which reports the real Fusion error.
+ *  - .strict() on every object the add-in declares additionalProperties:false
+ *    for; z.object() would silently STRIP unknown keys instead of rejecting.
+ *  - descriptions attached with .describe(), byte-exact from tool_surface.py.
+ *
+ * The bridge forwards the RAW arguments, not zod's parsed output, so these
+ * schemas are a gate: they reject what the add-in would reject, without
+ * becoming a second source of truth for defaults.
  */
-const TOOL_ARGS: Readonly<Record<string, z.ZodType>> = {
-  capture_viewport: z.object({
-    width: z.number().int().positive().optional(),
-    height: z.number().int().positive().optional(),
-  }),
-  get_viewport: z.object({}).optional(),
-  set_viewport: z.object({ width: z.number().int().positive(), height: z.number().int().positive() }),
-  get_active_selection: z.object({}).optional(),
-  fetch_api_documentation: z.object({ query: z.string().optional() }),
-  fetch_online_documentation: z.object({ query: z.string().optional() }),
-  fetch_design_guide: z.object({ topic: z.string().optional() }),
+const STANDARD_VIEWS = [
+  "front",
+  "back",
+  "left",
+  "right",
+  "top",
+  "bottom",
+  "isometric",
+  "iso_top_left",
+  "iso_top_right",
+  "iso_bottom_left",
+  "iso_bottom_right",
+] as const;
+const PROJECTIONS = ["orthographic", "perspective", "perspective_with_ortho_faces"] as const;
+const DESIGN_TYPES = ["parametric", "direct"] as const;
+const EXPORT_FORMATS = ["step", "stl", "f3d", "iges", "obj", "pdf"] as const;
+const STL_DENSITY = ["low", "medium", "high"] as const;
+const STL_UNITS = ["mm", "cm", "in", "m"] as const;
+
+/** xyz point in centimeters; shared by the get_viewport/set_viewport camera. */
+const pointSchema = z.strictObject({
+  x: z.number().min(-1e12).max(1e12),
+  y: z.number().min(-1e12).max(1e12),
+  z: z.number().min(-1e12).max(1e12),
+});
+
+export const TOOL_ARGS: Readonly<Record<string, z.ZodType>> = {
+  capture_viewport: z
+    .object({
+      width: z
+        .number()
+        .int()
+        .min(0)
+        .max(8192)
+        .optional()
+        .describe("Rendered image width in pixels (default: 800; 0 uses viewport width)"),
+      height: z
+        .number()
+        .int()
+        .min(0)
+        .max(8192)
+        .optional()
+        .describe("Rendered image height in pixels (default: 600; 0 uses viewport height)"),
+      view: z
+        .enum(STANDARD_VIEWS)
+        .optional()
+        .describe("Temporary ViewCube-relative standard view; omit to keep current view."),
+      fit: z.boolean().optional().describe("Temporarily fit all graphics before capture (default: false)."),
+      background: z.string().optional().describe("viewport (default), transparent, or a solid #RRGGBB color."),
+      anti_aliasing: z.boolean().optional().describe("Smooth rendered edges (default: true)."),
+      crop: z
+        .strictObject({
+          x: z.number().int().min(0).max(8192),
+          y: z.number().int().min(0).max(8192),
+          width: z.number().int().min(1).max(8192),
+          height: z.number().int().min(1).max(8192),
+        })
+        .optional()
+        .describe("Rectangle inside the rendered image; output dimensions equal crop width/height."),
+    })
+    .describe(
+      "Capture the active Fusion viewport as a PNG. Optional view and fit are temporary: " +
+        "the original camera is restored even on failure. Background can be viewport, " +
+        "transparent, or #RRGGBB. Crop uses pixels in the rendered image, origin top-left. " +
+        "Returns only the cropped region when crop is provided; limit 16 megapixels.",
+    ),
+  get_viewport: z
+    .object({})
+    .describe(
+      "Read active viewport pixel dimensions and camera eye, target, up_vector, projection, " +
+        "and extents or perspective_angle. Lengths are cm and angles degrees. " +
+        "Pass the returned camera object to set_viewport to restore it. All clients share this viewport.",
+    ),
+  set_viewport: z
+    .strictObject({
+      camera: z
+        .strictObject({
+          eye: pointSchema,
+          target: pointSchema,
+          up_vector: pointSchema,
+          projection: z.enum(PROJECTIONS),
+          extents: z
+            .strictObject({
+              width: z.number().min(1e-9).max(1e12),
+              height: z.number().min(1e-9).max(1e12),
+            })
+            .optional()
+            .describe("Required for orthographic cameras only, in cm."),
+          perspective_angle: z
+            .number()
+            .min(0.01)
+            .max(179)
+            .optional()
+            .describe("Required for perspective cameras only; angle in degrees."),
+        })
+        .optional()
+        .describe(
+          "Camera snapshot from get_viewport. Coordinates/extents in cm; " +
+            "perspective_angle in degrees. Use alone to restore a camera.",
+        ),
+      view: z.enum(STANDARD_VIEWS).optional(),
+      projection: z.enum(PROJECTIONS).optional(),
+      fit: z.boolean().optional().describe("Fit all graphics (default: false)."),
+      orbit: z
+        .strictObject({
+          yaw: z.number().min(-360).max(360).optional(),
+          pitch: z.number().min(-360).max(360).optional(),
+          roll: z.number().min(-360).max(360).optional(),
+        })
+        .optional(),
+      pan: z
+        .strictObject({
+          x: z.number().min(-1e9).max(1e9).optional(),
+          y: z.number().min(-1e9).max(1e9).optional(),
+        })
+        .optional(),
+      zoom: z.number().min(0.01).max(100).optional(),
+      description: z.string().optional(),
+    })
+    .describe(
+      "Control the active Fusion camera. Changes apply in order: projection/view, fit, orbit, pan, zoom. " +
+        "Standard views follow the user's ViewCube orientation. Orbit angles use right-hand rotation: " +
+        "yaw about camera up, pitch about camera right, roll about the viewing direction. " +
+        "Pan translates the camera along screen right/up in cm. Zoom >1 zooms in; <1 zooms out. " +
+        "Alternatively pass a complete camera snapshot alone. Returns actual camera state. " +
+        "This changes the shared viewport for all clients, without modifying model geometry.",
+    ),
+  get_active_selection: z
+    .object({})
+    .describe(
+      "Get the objects currently selected by the user in the Fusion 360 viewport. " +
+        "Returns detailed info per item (type, name, entityToken, parent component, " +
+        "and type-specific properties like area, volume, material).",
+    ),
+  fetch_api_documentation: z
+    .object({
+      search_term: z.string().describe("Search term (e.g. 'BRepBody', 'sketches', 'adsk.fusion.Sketch.add')"),
+      category: z.string().optional().describe("Search category: class_name, member_name, description, or all"),
+      max_results: z.number().int().optional().describe("Maximum number of results (default: 3)"),
+    })
+    .describe(
+      "Search live Fusion API metadata through runtime introspection. " +
+        "Returns scored results with class overviews, properties, " +
+        "and function signatures.",
+    ),
+  fetch_online_documentation: z
+    .object({
+      class_name: z.string().describe("API class name (e.g. 'BRepBody', 'Sketch')"),
+      member_name: z.string().optional().describe("Optional member name (e.g. 'add', 'name')"),
+    })
+    .describe("Fetch Autodesk cloudhelp documentation for a specific Fusion API class or member."),
+  fetch_design_guide: z
+    .object({})
+    .describe(
+      "Read the bundled Fusion design guide with workflow guidance, " +
+        "API patterns, naming rules, and modeling habits.",
+    ),
+  fusion_status: z
+    .object({})
+    .strict()
+    .describe(
+      "Report the state of the running Fusion: version, active document name, modified flag, " +
+        "design units, design type (parametric or direct), active workspace, timeline feature count, " +
+        "and how long this add-in has been running. Works with no document open; document fields " +
+        "are then null. Use this first to learn what you are working with.",
+    ),
+  list_documents: z
+    .object({})
+    .strict()
+    .describe(
+      "List every document currently open in Fusion, with name, active flag, modified flag, " +
+        "design type, and saved path (null when never saved). Use fusion_status for the active " +
+        "document's deeper detail.",
+    ),
+  new_document: z
+    .strictObject({
+      name: z.string().describe("Name for the new document."),
+      design_type: z
+        .enum(DESIGN_TYPES)
+        .optional()
+        .describe("Parametric (default) keeps a timeline; direct is history-free."),
+    })
+    .describe(
+      "Create and activate a new Fusion design document with the given name. The optional " +
+        "design_type selects parametric (timeline history, default) or direct (history-free) " +
+        "modeling; switching to direct removes the timeline. Returns the document name and " +
+        "the design type that was applied.",
+    ),
+  open_document: z
+    .strictObject({
+      path: z.string().describe("Path of the file to open."),
+    })
+    .describe(
+      "Open a previously saved Fusion file (.f3d, .f3z, .step, .iges, .smt, .sat, .dwg, ...) " +
+        "by path and activate it. Returns the document name and its modified flag. The path is " +
+        "passed to Fusion's open; local file paths are supported.",
+    ),
+  save_document: z
+    .strictObject({
+      path: z.string().optional().describe("Save-as target; omit to save the existing file in place."),
+    })
+    .describe(
+      "Save the active document. Omit path to save in place (fails with a clear error if the " +
+        "document has never been saved). Provide path to save-as, which also works for a never-saved " +
+        "document; the path's folder is used as the save location and its file name as the document " +
+        "name. Returns the resulting saved path.",
+    ),
+  export_document: z
+    .strictObject({
+      format: z.enum(EXPORT_FORMATS).describe("Export format."),
+      path: z.string().describe("Output file path."),
+      stl_density: z.enum(STL_DENSITY).optional().describe("STL mesh refinement (default: medium)."),
+      stl_units: z
+        .enum(STL_UNITS)
+        .optional()
+        .describe("Units the unitless STL numbers represent (default: design units)."),
+    })
+    .describe(
+      "Export the active design to step, stl, f3d, iges, obj, or pdf, writing to the given path " +
+        "and reporting the file size in bytes. Requires an active design; returns a clear error " +
+        "otherwise. For stl, stl_density maps to mesh refinement (low/medium/high, default medium) " +
+        "and stl_units selects the units the unitless STL numbers represent (default: the design's " +
+        "units). Not every Fusion build can emit every format; unsupported combinations are " +
+        "reported rather than silently ignored.",
+    ),
+  close_document: z
+    .strictObject({
+      document_name: z.string().optional().describe("Document to close; omit for the active one."),
+      save: z.boolean().optional().describe("Save in place before closing (default: false)."),
+    })
+    .describe(
+      "Close the active document, or the one named by document_name. Set save true to persist " +
+        "changes first (the document must already have a save location; otherwise save it with " +
+        "save_document first). Unsaved changes are discarded when save is false or omitted. " +
+        "Returns closed: true/false.",
+    ),
+  get_document_info: z
+    .object({})
+    .strict()
+    .describe(
+      "Report the active document's name, saved path, default length units, design type, " +
+        "modified flag, and version. Returns a clear error when no document is open.",
+    ),
+  list_parameters: z
+    .object({})
+    .strict()
+    .describe(
+      "List every user and model parameter in the active design. Each entry carries name, " +
+        'expression (Fusion expression string, e.g. "25 mm" or "width / 2"), unit, value ' +
+        "(the evaluated number; lengths are in the parameter's internal centimeter units), " +
+        "parameter_type (user or model), and driven (true when the model computes the value).",
+    ),
+  add_parameter: z
+    .strictObject({
+      name: z.string().describe("Parameter name; must be unique."),
+      expression: z.string().describe('Fusion expression, e.g. "3 mm" or "width/2".'),
+      unit: z.string().optional().describe("Parameter unit label (default: mm)."),
+    })
+    .describe(
+      "Add a user parameter to the active design. The expression is a Fusion expression string " +
+        '("3 mm", "width/2", "45 deg") and is consumed by the expression engine, so units ' +
+        "inside it are honored. The optional unit string (default mm) labels the parameter. " +
+        "Fails with a clear error on a duplicate name or an invalid expression.",
+    ),
+  modify_parameter: z
+    .strictObject({
+      name: z.string().describe("Existing parameter name."),
+      expression: z.string().describe('New Fusion expression, e.g. "40 mm" or "height * 2".'),
+    })
+    .describe(
+      "Change an existing parameter's expression and recompute the model in one pass — the " +
+        "cheapest edit path. Returns the new expression, its evaluated value, whether a recompute " +
+        "ran, and recomputed_feature_count (features that re-evaluated; null when the running " +
+        "Fusion cannot report it). Use this to drive dimensions instead of recreating geometry.",
+    ),
 };
 
 export interface BridgeServer {

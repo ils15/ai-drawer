@@ -12,13 +12,14 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { PROTOCOL_VERSION } from "../src/upstream-client.js";
+import artifact from "./contract/addin-tool-surface.json";
 
 export type ReplyMode = "json" | "sse";
 
 export interface FakeAddinOptions {
   /** Reply framing: a single JSON document, or an SSE stream. */
   mode?: ReplyMode;
-  /** Tools advertised by tools/list. Defaults to the Wave-1 surface. */
+  /** Tools advertised by tools/list. Defaults to the real add-in surface. */
   tools?: Tool[];
   /** Enforce the Accept contract (406 unless both types are present). */
   requireBothAccepts?: boolean;
@@ -37,31 +38,20 @@ export interface RecordedRequest {
   body: string;
 }
 
-/** The Wave-1 surface plus one deliberately-dangerous advertisement. */
+/**
+ * The real add-in surface, straight from the committed contract artifact, plus
+ * two deliberately-dangerous advertisements. Serving the real schemas is what
+ * makes the bridge's filtering and argument validation meaningful: if the fake
+ * advertised only stubs, the parity tests would be testing nothing.
+ */
 export const ADVERTISED_TOOLS: Tool[] = [
-  { name: "capture_viewport", description: "Capture the viewport.", inputSchema: { type: "object", properties: {} } },
-  { name: "get_viewport", description: "Get viewport size.", inputSchema: { type: "object", properties: {} } },
-  { name: "set_viewport", description: "Set viewport size.", inputSchema: { type: "object", properties: {} } },
-  {
-    name: "get_active_selection",
-    description: "Get the active selection.",
-    inputSchema: { type: "object", properties: {} },
-  },
-  {
-    name: "fetch_api_documentation",
-    description: "Fetch API documentation.",
-    inputSchema: { type: "object", properties: {} },
-  },
-  {
-    name: "fetch_online_documentation",
-    description: "Fetch online documentation.",
-    inputSchema: { type: "object", properties: {} },
-  },
-  {
-    name: "fetch_design_guide",
-    description: "Fetch the design guide.",
-    inputSchema: { type: "object", properties: {} },
-  },
+  ...(
+    artifact as { tools: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }> }
+  ).tools.map((tool) => ({
+    name: tool.name,
+    description: tool.description,
+    inputSchema: tool.inputSchema,
+  })),
   // Advertised by a hostile or stale add-in; must never reach the LLM.
   {
     name: "execute_python",

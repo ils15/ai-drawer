@@ -93,18 +93,23 @@ describe("bridge server", () => {
       expect(names).not.toContain("create_sketch");
       expect(names).toContain("capture_viewport");
       expect(names).toContain("fusion_health");
+      // A promoted Wave-2 tool must survive the filter, not just Wave-1 names.
+      expect(names).toContain("list_parameters");
+      expect(names).toHaveLength(19);
       expect(events.some((event) => event.tool === "execute_python")).toBe(true);
     } finally {
       await harness_.close();
     }
   });
 
-  it("keeps the full Wave-1 surface visible", async () => {
+  it("keeps the full live surface visible: 18 add-in tools plus fusion_health", async () => {
     const harness_ = await harness();
     try {
       const names = (await harness_.client.listTools()).tools.map((tool) => tool.name);
+      expect(names).toHaveLength(19);
       expect(names).toEqual(
         expect.arrayContaining([
+          // Wave-1: viewport, selection, documentation.
           "capture_viewport",
           "get_viewport",
           "set_viewport",
@@ -112,6 +117,19 @@ describe("bridge server", () => {
           "fetch_api_documentation",
           "fetch_online_documentation",
           "fetch_design_guide",
+          // Wave-2: lifecycle, documents, parameters.
+          "fusion_status",
+          "list_documents",
+          "new_document",
+          "open_document",
+          "save_document",
+          "export_document",
+          "close_document",
+          "get_document_info",
+          "list_parameters",
+          "add_parameter",
+          "modify_parameter",
+          // Bridge-owned.
           "fusion_health",
         ]),
       );
@@ -168,6 +186,37 @@ describe("bridge server", () => {
       });
       expect(result.isError).toBe(true);
       expect((result.content[0] as { text: string }).text).toContain("extrude");
+    } finally {
+      await harness_.close();
+    }
+  });
+
+  it("forwards a promoted Wave-2 tool instead of refusing it", async () => {
+    const harness_ = await harness();
+    try {
+      const result: CallToolResult = await harness_.client.callTool({
+        name: "fusion_status",
+        arguments: {},
+      });
+      expect(result.isError).not.toBe(true);
+      expect((result.content[0] as { text: string }).text).toBe("called fusion_status");
+      expect(addin.forwardedCalls).toContain("fusion_status");
+    } finally {
+      await harness_.close();
+    }
+  });
+
+  it("validates a Wave-2 tool's arguments before forwarding", async () => {
+    const harness_ = await harness();
+    try {
+      const result: CallToolResult = await harness_.client.callTool({
+        name: "new_document",
+        // design_type must be parametric or direct; "blueprint" is neither.
+        arguments: { name: "Bracket", design_type: "blueprint" },
+      });
+      expect(result.isError).toBe(true);
+      expect((result.content[0] as { text: string }).text).toContain("Invalid arguments");
+      expect(addin.forwardedCalls).not.toContain("new_document");
     } finally {
       await harness_.close();
     }
