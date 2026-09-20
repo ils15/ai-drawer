@@ -26,8 +26,9 @@ export const CATEGORY_TOOL = "list_tool_categories" as const;
 
 /**
  * The live curated surface: every tool the add-in serves today (Wave-1
- * viewport/selection/documentation plus the Wave-2 lifecycle, document and
- * parameter tools), together with the bridge-owned health probe.
+ * viewport/selection/documentation, the Wave-2 lifecycle, document and parameter
+ * tools, and the Wave-3a feature tools), together with the bridge-owned health
+ * probe.
  *
  * This set is kept in lockstep with the add-in's tool_surface.py by the
  * cross-package drift guard in tests/drift-guard.test.ts, which reads the
@@ -58,6 +59,12 @@ export const ALLOWED: ReadonlySet<string> = new Set<string>([
   "save_document",
   // Wave-2 diagnostics.
   "fusion_diagnostics",
+  // Wave-3a: feature creation.
+  "fillet",
+  "chamfer",
+  "hole",
+  "rectangular_pattern",
+  "circular_pattern",
   // Bridge-owned; never forwarded to the add-in.
   HEALTH_TOOL,
   CATEGORY_TOOL,
@@ -78,8 +85,6 @@ export const PENDING: readonly string[] = [
   "create_component",
   "create_sketch",
   "extrude",
-  "fillet",
-  "hole",
   "revolve",
 ];
 

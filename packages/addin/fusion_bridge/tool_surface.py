@@ -25,6 +25,13 @@ MODIFY_PARAMETER = "modify_parameter"
 # Wave 2 — diagnostics
 FUSION_DIAGNOSTICS = "fusion_diagnostics"
 
+# Wave 3a — features
+FILLET = "fillet"
+CHAMFER = "chamfer"
+HOLE = "hole"
+RECTANGULAR_PATTERN = "rectangular_pattern"
+CIRCULAR_PATTERN = "circular_pattern"
+
 # Tool categories.  A tool belongs to exactly one; ``build_tool_handlers`` and
 # the contract tests enforce that every definition carries one.
 CATEGORY_VIEWPORT = "viewport"
@@ -33,6 +40,7 @@ CATEGORY_DOCUMENTS = "documents"
 CATEGORY_PARAMETERS = "parameters"
 CATEGORY_DOCUMENTATION = "documentation"
 CATEGORY_DIAGNOSTICS = "diagnostics"
+CATEGORY_FEATURES = "features"
 CATEGORIES = (
     CATEGORY_VIEWPORT,
     CATEGORY_SELECTION,
@@ -40,6 +48,7 @@ CATEGORIES = (
     CATEGORY_PARAMETERS,
     CATEGORY_DOCUMENTATION,
     CATEGORY_DIAGNOSTICS,
+    CATEGORY_FEATURES,
 )
 
 # Resource constants
@@ -675,6 +684,222 @@ TOOL_DEFINITIONS = [
             "description": "No arguments; the counters are read.",
         },
     },
+    {
+        "name": FILLET,
+        "category": CATEGORY_FEATURES,
+        "description": (
+            "Add a constant-radius fillet across one or more edges of the active design. "
+            "Edges are addressed by stored selection handle ($selection_0 from get_active_selection); "
+            'radius is a Fusion expression such as "5 mm". is_tangent_chain (default true) extends the '
+            "fillet along tangentially connected edges. One fillet feature is created for the whole edge set."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "description": "Fillet definition; edges and radius are required.",
+            "properties": {
+                "edges": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": 'Stored selection handles of the edges to fillet, e.g. ["$selection_0"].',
+                    "examples": [["$selection_0", "$selection_1"]],
+                },
+                "radius": {
+                    "type": "string",
+                    "description": "Fillet radius as a Fusion expression; a bare number is centimetres.",
+                    "examples": ["5 mm", "0.25 in"],
+                },
+                "is_tangent_chain": {
+                    "type": "boolean",
+                    "description": "Also fillet edges tangentially connected to the input edges (default: true).",
+                },
+            },
+            "required": ["edges", "radius"],
+        },
+    },
+    {
+        "name": CHAMFER,
+        "category": CATEGORY_FEATURES,
+        "description": (
+            "Add an equal-distance chamfer across one or more edges of the active design. "
+            "Edges are addressed by stored selection handle ($selection_0 from get_active_selection); "
+            'distance is a Fusion expression such as "2 mm" and offsets both sides of the edge equally.'
+        ),
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "description": "Chamfer definition; edges and distance are required.",
+            "properties": {
+                "edges": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": 'Stored selection handles of the edges to chamfer, e.g. ["$selection_0"].',
+                    "examples": [["$selection_0"]],
+                },
+                "distance": {
+                    "type": "string",
+                    "description": "Chamfer offset distance as a Fusion expression; a bare number is centimetres.",
+                    "examples": ["2 mm", "0.1 in"],
+                },
+            },
+            "required": ["edges", "distance"],
+        },
+    },
+    {
+        "name": HOLE,
+        "category": CATEGORY_FEATURES,
+        "description": (
+            "Drill a simple hole at a point on a planar face of the active design. "
+            "The face and its positioning point place the hole; diameter is a Fusion expression. "
+            "Extent is a distance (needs a depth) or through-all, and direction picks which way the hole "
+            "runs off the face normal. The face must be planar."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "description": "Hole definition; face, position, and diameter are required.",
+            "properties": {
+                "face": {
+                    "type": "string",
+                    "description": "Stored selection handle of the planar face the hole starts on.",
+                    "examples": ["$selection_0"],
+                },
+                "position": {
+                    "type": "object",
+                    "description": "Hole centre as a 3D point in centimetres, dropped onto the face along its normal.",
+                    "properties": {
+                        "x": {"type": "number", "description": "X coordinate in centimetres."},
+                        "y": {"type": "number", "description": "Y coordinate in centimetres."},
+                        "z": {"type": "number", "description": "Z coordinate in centimetres."},
+                    },
+                    "required": ["x", "y", "z"],
+                    "additionalProperties": False,
+                },
+                "diameter": {
+                    "type": "string",
+                    "description": "Hole diameter as a Fusion expression; a bare number is centimetres.",
+                    "examples": ["8 mm", "0.25 in"],
+                },
+                "extent": {
+                    "type": "string",
+                    "enum": ["distance", "through_all"],
+                    "description": "Hole extent: a fixed distance (needs depth) or through-all (default: distance).",
+                },
+                "depth": {
+                    "type": "string",
+                    "description": "Hole depth as a Fusion expression; required for extent=distance, else ignored.",
+                    "examples": ["10 mm"],
+                },
+                "direction": {
+                    "type": "string",
+                    "enum": ["positive", "negative"],
+                    "description": "Which way the hole runs off the face normal (default: positive).",
+                },
+            },
+            "required": ["face", "position", "diameter"],
+        },
+    },
+    {
+        "name": RECTANGULAR_PATTERN,
+        "category": CATEGORY_FEATURES,
+        "description": (
+            "Pattern bodies, faces, or features along one direction, optionally a second. "
+            "Entities are addressed by stored selection handle and must all be the same kind. "
+            "Each direction takes a linear edge or axis handle, an instance count, and a spacing expression. "
+            "A second direction needs all three of its arguments."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "description": "Rectangular pattern; entities, direction_one, quantity_one, distance_one required.",
+            "properties": {
+                "entities": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Stored selection handles of the entities to pattern; all must be the same type.",
+                    "examples": [["$selection_0"]],
+                },
+                "direction_one": {
+                    "type": "string",
+                    "description": "Stored selection handle of the linear edge or axis defining the first direction.",
+                    "examples": ["$selection_1"],
+                },
+                "quantity_one": {
+                    "type": "number",
+                    "description": "Number of instances in the first direction, a unitless count.",
+                    "examples": [3],
+                },
+                "distance_one": {
+                    "type": "string",
+                    "description": "First-direction spacing as a Fusion expression; a bare number is centimetres.",
+                    "examples": ["20 mm"],
+                },
+                "direction_two": {
+                    "type": "string",
+                    "description": "Optional handle of the edge or axis defining the second direction.",
+                    "examples": ["$selection_2"],
+                },
+                "quantity_two": {
+                    "type": "number",
+                    "description": "Optional instance count in the second direction, a unitless count.",
+                    "examples": [2],
+                },
+                "distance_two": {
+                    "type": "string",
+                    "description": "Second-direction spacing as a Fusion expression; a bare number is centimetres.",
+                    "examples": ["15 mm"],
+                },
+                "is_symmetric": {
+                    "type": "boolean",
+                    "description": "Distribute instances symmetrically about the seed (default: false).",
+                },
+            },
+            "required": ["entities", "direction_one", "quantity_one", "distance_one"],
+        },
+    },
+    {
+        "name": CIRCULAR_PATTERN,
+        "category": CATEGORY_FEATURES,
+        "description": (
+            "Pattern bodies, faces, or features around an axis through a total angle. "
+            "Entities are addressed by stored selection handle and must all be the same kind. "
+            "The axis is a linear edge, construction axis, or cylindrical face handle; "
+            "the angle defaults to a full circle."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "description": "Circular pattern definition; entities, axis, and quantity are required.",
+            "properties": {
+                "entities": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Stored selection handles of the entities to pattern; all must be the same type.",
+                    "examples": [["$selection_0"]],
+                },
+                "axis": {
+                    "type": "string",
+                    "description": "Handle of the linear edge, axis, or cylindrical face defining the rotation axis.",
+                    "examples": ["$selection_1"],
+                },
+                "quantity": {
+                    "type": "number",
+                    "description": "Number of instances around the axis, a unitless count.",
+                    "examples": [6],
+                },
+                "total_angle": {
+                    "type": "string",
+                    "description": "Total sweep as a Fusion angle expression; a bare number is degrees.",
+                    "examples": ["360 deg", "180 deg"],
+                },
+                "is_symmetric": {
+                    "type": "boolean",
+                    "description": "Distribute instances symmetrically about the seed (default: false).",
+                },
+            },
+            "required": ["entities", "axis", "quantity"],
+        },
+    },
 ]
 
 _TOOL_NAMES = {t["name"] for t in TOOL_DEFINITIONS}
@@ -701,6 +926,11 @@ def build_tool_handlers(
     list_parameters,
     add_parameter,
     modify_parameter,
+    fillet,
+    chamfer,
+    hole,
+    rectangular_pattern,
+    circular_pattern,
 ):
     """Build a dict mapping tool name to handler function.
 
@@ -727,6 +957,11 @@ def build_tool_handlers(
         LIST_PARAMETERS: list_parameters,
         ADD_PARAMETER: add_parameter,
         MODIFY_PARAMETER: modify_parameter,
+        FILLET: fillet,
+        CHAMFER: chamfer,
+        HOLE: hole,
+        RECTANGULAR_PATTERN: rectangular_pattern,
+        CIRCULAR_PATTERN: circular_pattern,
     }
     if set(handlers) != _TOOL_NAMES:
         raise RuntimeError(f"Handler registry mismatch: {set(handlers) ^ _TOOL_NAMES}")

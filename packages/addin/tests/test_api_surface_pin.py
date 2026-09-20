@@ -128,9 +128,7 @@ def _sample_graph(fusion):
         ("fusion", "BRepBodies"): root.bodies,
     }
 
-    parameter = design.userParameters.add(
-        "pin_check", values.ValueInput.createByString("10 mm"), "mm", ""
-    )
+    parameter = design.userParameters.add("pin_check", values.ValueInput.createByString("10 mm"), "mm", "")
     graph[("fusion", "Parameter")] = parameter
 
     sketch.add_line(0, 0, 1, 0)
@@ -141,9 +139,34 @@ def _sample_graph(fusion):
     feature = root.features.add_extrude(profile, 1.0, "PinCheck")
     graph[("fusion", "BRepBody")] = feature.body
     graph[("fusion", "BoundingBox")] = profile.boundingBox
-    graph[("core", "Selection")] = app.userInterface.activeSelections.add(sketch.sketchPoints.add(
-        values.Point3D.create()
-    ))
+    graph[("core", "Selection")] = app.userInterface.activeSelections.add(
+        sketch.sketchPoints.add(values.Point3D.create())
+    )
+
+    # Feature-tool inputs are cold-start objects too: the handlers reach them
+    # through createInput(), so the instance attributes the pin lists
+    # (edgeSetInputs, quantityOne, totalAngle, ...) need an instance to probe.
+    from fake_fusion.features import FakeBRepEdge
+
+    direction = FakeBRepEdge("PinDirection", 2.0)
+    fillet_input = root.features.filletFeatures.createInput()
+    chamfer_input = root.features.chamferFeatures.createInput2()
+    hole_input = root.features.holeFeatures.createSimpleInput(values.ValueInput.createByReal(0.5))
+    rect_input = root.features.rectangularPatternFeatures.createInput(
+        [feature.body],
+        direction,
+        values.ValueInput.createByReal(2),
+        values.ValueInput.createByReal(1.0),
+        values.PatternDistanceType.SpacingPatternDistanceType,
+    )
+    circular_input = root.features.circularPatternFeatures.createInput([feature.body], direction)
+    graph[("fusion", "FilletFeatureInput")] = fillet_input
+    graph[("fusion", "FilletEdgeCollection")] = fillet_input.edgeSetInputs
+    graph[("fusion", "ChamferFeatureInput")] = chamfer_input
+    graph[("fusion", "ChamferEdgeCollection")] = chamfer_input.chamferEdgeSets
+    graph[("fusion", "HoleFeatureInput")] = hole_input
+    graph[("fusion", "RectangularPatternFeatureInput")] = rect_input
+    graph[("fusion", "CircularPatternFeatureInput")] = circular_input
 
     return graph
 
@@ -238,9 +261,7 @@ def test_pinned_members_are_documented_by_autodesk(namespace, class_name):
             continue
         undocumentable.append(member)
 
-    assert not undocumentable, (
-        f"{namespace}.{class_name}: pinned but not documented: {undocumentable}"
-    )
+    assert not undocumentable, f"{namespace}.{class_name}: pinned but not documented: {undocumentable}"
 
 
 def _is_documented(namespace, class_name, member, documented):

@@ -33,6 +33,7 @@ export const TOOL_CATEGORIES = [
   "parameters",
   "documentation",
   "diagnostics",
+  "features",
 ] as const;
 
 export type ToolCategory = (typeof TOOL_CATEGORIES)[number];
@@ -68,6 +69,12 @@ export const CATEGORY_BY_TOOL: Readonly<Record<string, ToolCategory>> = {
   // diagnostics
   fusion_status: "diagnostics",
   fusion_diagnostics: "diagnostics",
+  // features
+  fillet: "features",
+  chamfer: "features",
+  hole: "features",
+  rectangular_pattern: "features",
+  circular_pattern: "features",
   // Bridge-owned helpers; never forwarded to the add-in.
   [HEALTH_TOOL]: "diagnostics",
   [CATEGORY_TOOL]: "diagnostics",
@@ -94,6 +101,7 @@ const CATEGORY_DESCRIPTIONS: Readonly<Record<ToolCategory, string>> = {
   parameters: "Reading and editing the user parameters that drive the model.",
   documentation: "Searching the Fusion API and reading the bundled design guide.",
   diagnostics: "Readiness, health and reliability of the bridge and the add-in.",
+  features: "Building CAD features on the active design: fillets, chamfers, holes and patterns.",
 };
 
 /**
@@ -109,6 +117,7 @@ export function listToolCategories(): ToolCategoriesReport {
     parameters: [],
     documentation: [],
     diagnostics: [],
+    features: [],
   };
 
   let total = 0;
@@ -138,9 +147,9 @@ export function categoryTool(): Tool {
     name: CATEGORY_TOOL,
     description:
       "List the available tools grouped by category (viewport, selection, documents, parameters, " +
-      "documentation, diagnostics), together with a short description of each group. Bridge-owned; " +
-      "safe to call before any other tool to learn what this bridge can do. Only live tools appear; " +
-      "roadmap tools are not listed.",
+      "documentation, diagnostics, features), together with a short description of each group. " +
+      "Bridge-owned; safe to call before any other tool to learn what this bridge can do. Only live " +
+      "tools appear; roadmap tools are not listed.",
     inputSchema: { type: "object", properties: {} },
   };
 }

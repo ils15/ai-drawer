@@ -93,6 +93,35 @@ class FakeFusion:
         value_input = values.ValueInput.createByString(expression)
         return self.user_parameters.add(name, value_input, unit, "")
 
+    # -- geometry helpers --------------------------------------------------
+
+    def add_edge(self, name, length, token=None):
+        """Create a BRepEdge and select it, as a user clicking an edge would.
+
+        Feature tools address geometry by *stored selection handle*, so the
+        honest way to give a test an edge to fillet is to put one in the
+        selection set.  ``get_active_selection`` then stores it as
+        ``$selection_0``, which the fillet or chamfer tool resolves back to
+        this very object.
+        """
+        from .features import FakeBRepEdge
+
+        edge = FakeBRepEdge(name, length, entity_token=token)
+        self.app.userInterface.activeSelections.add(edge)
+        return edge
+
+    def add_face(self, name, area=1.0, token=None, is_planar=True):
+        """Create a BRepFace and select it (the hole tool starts on one).
+
+        ``is_planar=False`` gives a curved face, which a simple hole cannot be
+        positioned on -- the hole tool reports that as ``invalid_value``.
+        """
+        from .features import FakeBRepFace
+
+        face = FakeBRepFace(name, area=area, entity_token=token, is_planar=is_planar)
+        self.app.userInterface.activeSelections.add(face)
+        return face
+
 
 def make_fusion(with_document: bool = True, name: str = "Test Design") -> FakeFusion:
     """Build a fake Fusion.  By default one design document is already open."""

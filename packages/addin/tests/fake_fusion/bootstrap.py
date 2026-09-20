@@ -23,6 +23,13 @@ from . import values
 from .application import ApplicationClass
 from .design import FakeDesign
 from .factory import FakeFusion, make_fusion
+from .features import (
+    FakeChamferFeatures,
+    FakeCircularPatternFeatures,
+    FakeFilletFeatures,
+    FakeHoleFeatures,
+    FakeRectangularPatternFeatures,
+)
 
 _TESTS_DIR = pathlib.Path(__file__).resolve().parents[1]
 
@@ -53,6 +60,17 @@ _FUSION_ATTRIBUTES = {
     "DesignTypes": values.DesignTypes,
     "DistanceUnits": values.DistanceUnits,
     "MeshRefinementSettings": values.MeshRefinementSettings,
+    # The feature tools read these enumerations directly (adsk.fusion.ExtentDirections.*),
+    # so they must exist on the installed fake just as on the real module.
+    "ExtentDirections": values.ExtentDirections,
+    "PatternDistanceType": values.PatternDistanceType,
+    # Feature collection classes are reached through Component.features, but
+    # pinning them here keeps the class-level surface honest for the pin check.
+    "FilletFeatures": FakeFilletFeatures,
+    "ChamferFeatures": FakeChamferFeatures,
+    "HoleFeatures": FakeHoleFeatures,
+    "RectangularPatternFeatures": FakeRectangularPatternFeatures,
+    "CircularPatternFeatures": FakeCircularPatternFeatures,
 }
 
 

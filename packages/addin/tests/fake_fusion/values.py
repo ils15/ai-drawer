@@ -56,6 +56,15 @@ CameraTypes = _enum(
     PerspectiveCameraType=1,
     PerspectiveWithOrthoFacesCameraType=2,
 )
+# Values follow the published Autodesk enumerators (see fusion_PatternDistanceType
+# and fusion_ExtentDirections): the pattern tools read them by name, and the
+# numeric values must not drift from the real runtime.
+PatternDistanceType = _enum(ExtentPatternDistanceType=0, SpacingPatternDistanceType=1)
+ExtentDirections = _enum(
+    PositiveExtentDirection=0,
+    NegativeExtentDirection=1,
+    SymmetricExtentDirection=2,
+)
 
 
 # ── Event plumbing ───────────────────────────────────────────────────────────

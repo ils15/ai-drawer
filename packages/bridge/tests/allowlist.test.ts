@@ -19,23 +19,28 @@ describe("allowlist", () => {
       [
         "add_parameter",
         "capture_viewport",
+        "chamfer",
+        "circular_pattern",
         "close_document",
         "export_document",
         "fetch_api_documentation",
         "fetch_design_guide",
         "fetch_online_documentation",
+        "fillet",
         "fusion_diagnostics",
         "fusion_health",
         "fusion_status",
         "get_active_selection",
         "get_document_info",
         "get_viewport",
+        "hole",
         "list_documents",
         "list_parameters",
         "list_tool_categories",
         "modify_parameter",
         "new_document",
         "open_document",
+        "rectangular_pattern",
         "save_document",
         "set_viewport",
       ].sort(),
@@ -44,16 +49,7 @@ describe("allowlist", () => {
 
   it("keeps the genuine Wave-3 CAD surface in PENDING, not in ALLOWED", () => {
     expect(PENDING).toEqual(
-      [
-        "apply_material",
-        "create_body",
-        "create_component",
-        "create_sketch",
-        "extrude",
-        "fillet",
-        "hole",
-        "revolve",
-      ].sort(),
+      ["apply_material", "create_body", "create_component", "create_sketch", "extrude", "revolve"].sort(),
     );
     for (const name of PENDING) expect(ALLOWED.has(name)).toBe(false);
   });

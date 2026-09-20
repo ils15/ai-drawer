@@ -478,6 +478,160 @@ export const TOOL_ARGS: Readonly<Record<string, z.ZodType>> = {
         "never messages or paths. Use this to decide whether a missed call was this add-in or " +
         "the client.",
     ),
+  // Wave-3a: feature creation. Geometry is addressed by stored selection handle
+  // ($selection_N from get_active_selection); dimensions are Fusion expression
+  // strings. Defaults live in the add-in handlers, so they are documented in the
+  // descriptions below rather than re-declared with .default() — the bridge
+  // forwards the raw arguments and re-declaring a default would leak into the
+  // JSON Schema the drift guard compares against the add-in.
+  fillet: z
+    .strictObject({
+      edges: z
+        .array(z.string())
+        .describe('Stored selection handles of the edges to fillet, e.g. ["$selection_0"].')
+        .meta({ examples: [["$selection_0", "$selection_1"]] }),
+      radius: z
+        .string()
+        .describe("Fillet radius as a Fusion expression; a bare number is centimetres.")
+        .meta({ examples: ["5 mm", "0.25 in"] }),
+      is_tangent_chain: z
+        .boolean()
+        .optional()
+        .describe("Also fillet edges tangentially connected to the input edges (default: true)."),
+    })
+    .describe(
+      "Add a constant-radius fillet across one or more edges of the active design. " +
+        "Edges are addressed by stored selection handle ($selection_0 from get_active_selection); " +
+        'radius is a Fusion expression such as "5 mm". is_tangent_chain (default true) extends the ' +
+        "fillet along tangentially connected edges. One fillet feature is created for the whole edge set.",
+    ),
+  chamfer: z
+    .strictObject({
+      edges: z
+        .array(z.string())
+        .describe('Stored selection handles of the edges to chamfer, e.g. ["$selection_0"].')
+        .meta({ examples: [["$selection_0"]] }),
+      distance: z
+        .string()
+        .describe("Chamfer offset distance as a Fusion expression; a bare number is centimetres.")
+        .meta({ examples: ["2 mm", "0.1 in"] }),
+    })
+    .describe(
+      "Add an equal-distance chamfer across one or more edges of the active design. " +
+        "Edges are addressed by stored selection handle ($selection_0 from get_active_selection); " +
+        'distance is a Fusion expression such as "2 mm" and offsets both sides of the edge equally.',
+    ),
+  hole: z
+    .strictObject({
+      face: z
+        .string()
+        .describe("Stored selection handle of the planar face the hole starts on.")
+        .meta({ examples: ["$selection_0"] }),
+      position: z
+        .strictObject({
+          x: z.number().describe("X coordinate in centimetres."),
+          y: z.number().describe("Y coordinate in centimetres."),
+          z: z.number().describe("Z coordinate in centimetres."),
+        })
+        .describe("Hole centre as a 3D point in centimetres, dropped onto the face along its normal."),
+      diameter: z
+        .string()
+        .describe("Hole diameter as a Fusion expression; a bare number is centimetres.")
+        .meta({ examples: ["8 mm", "0.25 in"] }),
+      extent: z
+        .enum(["distance", "through_all"])
+        .optional()
+        .describe("Hole extent: a fixed distance (needs depth) or through-all (default: distance)."),
+      depth: z
+        .string()
+        .optional()
+        .describe("Hole depth as a Fusion expression; required for extent=distance, else ignored.")
+        .meta({ examples: ["10 mm"] }),
+      direction: z
+        .enum(["positive", "negative"])
+        .optional()
+        .describe("Which way the hole runs off the face normal (default: positive)."),
+    })
+    .describe(
+      "Drill a simple hole at a point on a planar face of the active design. " +
+        "The face and its positioning point place the hole; diameter is a Fusion expression. " +
+        "Extent is a distance (needs a depth) or through-all, and direction picks which way the hole " +
+        "runs off the face normal. The face must be planar.",
+    ),
+  rectangular_pattern: z
+    .strictObject({
+      entities: z
+        .array(z.string())
+        .describe("Stored selection handles of the entities to pattern; all must be the same type.")
+        .meta({ examples: [["$selection_0"]] }),
+      direction_one: z
+        .string()
+        .describe("Stored selection handle of the linear edge or axis defining the first direction.")
+        .meta({ examples: ["$selection_1"] }),
+      quantity_one: z
+        .number()
+        .describe("Number of instances in the first direction, a unitless count.")
+        .meta({ examples: [3] }),
+      distance_one: z
+        .string()
+        .describe("First-direction spacing as a Fusion expression; a bare number is centimetres.")
+        .meta({ examples: ["20 mm"] }),
+      direction_two: z
+        .string()
+        .optional()
+        .describe("Optional handle of the edge or axis defining the second direction.")
+        .meta({ examples: ["$selection_2"] }),
+      quantity_two: z
+        .number()
+        .optional()
+        .describe("Optional instance count in the second direction, a unitless count.")
+        .meta({ examples: [2] }),
+      distance_two: z
+        .string()
+        .optional()
+        .describe("Second-direction spacing as a Fusion expression; a bare number is centimetres.")
+        .meta({ examples: ["15 mm"] }),
+      is_symmetric: z
+        .boolean()
+        .optional()
+        .describe("Distribute instances symmetrically about the seed (default: false)."),
+    })
+    .describe(
+      "Pattern bodies, faces, or features along one direction, optionally a second. " +
+        "Entities are addressed by stored selection handle and must all be the same kind. " +
+        "Each direction takes a linear edge or axis handle, an instance count, and a spacing expression. " +
+        "A second direction needs all three of its arguments.",
+    ),
+  circular_pattern: z
+    .strictObject({
+      entities: z
+        .array(z.string())
+        .describe("Stored selection handles of the entities to pattern; all must be the same type.")
+        .meta({ examples: [["$selection_0"]] }),
+      axis: z
+        .string()
+        .describe("Handle of the linear edge, axis, or cylindrical face defining the rotation axis.")
+        .meta({ examples: ["$selection_1"] }),
+      quantity: z
+        .number()
+        .describe("Number of instances around the axis, a unitless count.")
+        .meta({ examples: [6] }),
+      total_angle: z
+        .string()
+        .optional()
+        .describe("Total sweep as a Fusion angle expression; a bare number is degrees.")
+        .meta({ examples: ["360 deg", "180 deg"] }),
+      is_symmetric: z
+        .boolean()
+        .optional()
+        .describe("Distribute instances symmetrically about the seed (default: false)."),
+    })
+    .describe(
+      "Pattern bodies, faces, or features around an axis through a total angle. " +
+        "Entities are addressed by stored selection handle and must all be the same kind. " +
+        "The axis is a linear edge, construction axis, or cylindrical face handle; " +
+        "the angle defaults to a full circle.",
+    ),
   list_tool_categories: z.object({}).describe("List the available tools grouped by category; takes no arguments."),
 };
 

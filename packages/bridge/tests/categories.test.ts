@@ -30,7 +30,7 @@ it("list_tool_categories is itself part of the live surface", () => {
 it("reports the whole live surface exactly once", () => {
   const report = listToolCategories();
 
-  expect(report.total_tools).toBe(21);
+  expect(report.total_tools).toBe(26);
   expect(report.total_tools).toBe(ALLOWED.size);
 
   const tools = listedTools(report);
@@ -65,16 +65,7 @@ it("never surfaces PENDING Wave-3 CAD tools in any category", () => {
 
   // The closed PENDING list, spelled out so a renamed entry fails loudly.
   expect(PENDING).toEqual(
-    [
-      "apply_material",
-      "create_body",
-      "create_component",
-      "create_sketch",
-      "extrude",
-      "fillet",
-      "hole",
-      "revolve",
-    ].sort(),
+    ["apply_material", "create_body", "create_component", "create_sketch", "extrude", "revolve"].sort(),
   );
   for (const name of PENDING) {
     expect(ALLOWED.has(name)).toBe(false);

@@ -34,6 +34,11 @@ class ToolSurfaceTests(unittest.TestCase):
         "list_parameters",
         "add_parameter",
         "modify_parameter",
+        "fillet",
+        "chamfer",
+        "hole",
+        "rectangular_pattern",
+        "circular_pattern",
     }
 
     def test_all_expected_tools_present(self):
@@ -83,6 +88,7 @@ class ToolCategoryTests(unittest.TestCase):
                 "parameters",
                 "documentation",
                 "diagnostics",
+                "features",
             },
         )
 

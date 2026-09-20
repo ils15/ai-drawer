@@ -114,18 +114,18 @@ describe("bridge server", () => {
       expect(names).toContain("fusion_health");
       // A promoted Wave-2 tool must survive the filter, not just Wave-1 names.
       expect(names).toContain("list_parameters");
-      expect(names).toHaveLength(21);
+      expect(names).toHaveLength(26);
       expect(events.some((event) => event.tool === "execute_python")).toBe(true);
     } finally {
       await harness_.close();
     }
   });
 
-  it("keeps the full live surface visible: 19 add-in tools plus the bridge-owned probes", async () => {
+  it("keeps the full live surface visible: 24 add-in tools plus the bridge-owned probes", async () => {
     const harness_ = await harness();
     try {
       const names = (await harness_.client.listTools()).tools.map((tool) => tool.name);
-      expect(names).toHaveLength(21);
+      expect(names).toHaveLength(26);
       expect(names).toEqual(
         expect.arrayContaining([
           // Wave-1: viewport, selection, documentation.
@@ -150,6 +150,12 @@ describe("bridge server", () => {
           "modify_parameter",
           // Wave-2 diagnostics.
           "fusion_diagnostics",
+          // Wave-3a: feature creation.
+          "fillet",
+          "chamfer",
+          "hole",
+          "rectangular_pattern",
+          "circular_pattern",
           // Bridge-owned; answered locally, never forwarded.
           "fusion_health",
           "list_tool_categories",
@@ -194,7 +200,7 @@ describe("bridge server", () => {
         categories: Array<{ name: string; description: string; tools: string[] }>;
         total_tools: number;
       };
-      expect(report.total_tools).toBe(21);
+      expect(report.total_tools).toBe(26);
       // The closed category set the add-in declares, nothing outside it.
       expect(report.categories.map((category) => category.name)).toEqual([
         "viewport",
@@ -203,11 +209,12 @@ describe("bridge server", () => {
         "parameters",
         "documentation",
         "diagnostics",
+        "features",
       ]);
       // Every live tool is classified exactly once across the categories.
       const classified = report.categories.flatMap((category) => category.tools);
-      expect(classified).toHaveLength(21);
-      expect(new Set(classified).size).toBe(21);
+      expect(classified).toHaveLength(26);
+      expect(new Set(classified).size).toBe(26);
       // PENDING and BLOCKED_HARD names can never be surfaced.
       expect(classified).not.toContain("create_sketch");
       expect(classified).not.toContain("execute_python");

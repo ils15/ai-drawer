@@ -11,7 +11,7 @@ from . import (
     viewport,
 )
 from .dispatch import log
-from .tools import diagnostics, documents, lifecycle, parameters
+from .tools import diagnostics, documents, features, lifecycle, parameters
 
 # -- Wrapper helpers for handlers that take arguments directly ---------------
 
@@ -60,4 +60,9 @@ TOOL_HANDLERS = tool_surface.build_tool_handlers(
     list_parameters=_wrap(parameters.list_parameters),
     add_parameter=_wrap(parameters.add_parameter),
     modify_parameter=_wrap(parameters.modify_parameter),
+    fillet=_wrap(features.fillet),
+    chamfer=_wrap(features.chamfer),
+    hole=_wrap(features.hole),
+    rectangular_pattern=_wrap(features.rectangular_pattern),
+    circular_pattern=_wrap(features.circular_pattern),
 )

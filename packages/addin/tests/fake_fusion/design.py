@@ -20,11 +20,25 @@ from .geometry import FakeSketches
 # Parameter.value reports in the real API.
 
 _UNIT_FACTORS = {
-    "mm": 0.1, "cm": 1.0, "m": 100.0, "meter": 100.0, "metre": 100.0,
-    "in": 2.54, "inch": 2.54, "ft": 30.48, "foot": 30.48, "feet": 30.48,
-    "deg": 1.0, "degree": 1.0, "degrees": 1.0,
-    "rad": 180.0 / math.pi, "radian": 180.0 / math.pi, "radians": 180.0 / math.pi,
-    "°": 1.0, "ul": 1.0, "unitless": 1.0,
+    "mm": 0.1,
+    "cm": 1.0,
+    "m": 100.0,
+    "meter": 100.0,
+    "metre": 100.0,
+    "in": 2.54,
+    "inch": 2.54,
+    "ft": 30.48,
+    "foot": 30.48,
+    "feet": 30.48,
+    "deg": 1.0,
+    "degree": 1.0,
+    "degrees": 1.0,
+    "rad": 180.0 / math.pi,
+    "radian": 180.0 / math.pi,
+    "radians": 180.0 / math.pi,
+    "°": 1.0,
+    "ul": 1.0,
+    "unitless": 1.0,
 }
 
 _NUMBER_UNIT = re.compile(
@@ -261,7 +275,9 @@ class FakeComponent:
         self.name = name
         self.design = design
         self.sketches = FakeSketches()
-        self.features = FakeFeatures(design.timeline if design else FakeTimeline())
+        # The feature-tool collections evaluate expression-string dimensions
+        # against the design's parameters, so they need the design itself.
+        self.features = FakeFeatures(design.timeline if design else FakeTimeline(), design=design)
         self.bodies = FakeBRepBodies()
         self.occurrences = FakeOccurrences()
 
