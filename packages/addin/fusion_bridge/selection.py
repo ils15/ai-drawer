@@ -2,10 +2,10 @@
 
 import contextlib
 import json
-import traceback
 
 from . import value_builders
 from .dispatch import get_app, log
+from .errors import internal_error, structured_error
 
 
 def get_active_selection(arguments):
@@ -16,9 +16,7 @@ def get_active_selection(arguments):
         selections = ui.activeSelections
 
         # Clear previous selection_* entries from store
-        to_remove = [
-            k for k in value_builders.OBJECT_STORE if k.startswith("selection_")
-        ]
+        to_remove = [k for k in value_builders.OBJECT_STORE if k.startswith("selection_")]
         for k in to_remove:
             del value_builders.OBJECT_STORE[k]
 
@@ -68,13 +66,11 @@ def get_active_selection(arguments):
             "content": [{"type": "text", "text": json.dumps(result, indent=2)}],
             "isError": False,
         }
+    except ValueError as exc:
+        return structured_error("invalid_value", str(exc))
     except Exception as exc:
-        tb = traceback.format_exc()
-        log(f"[MCP] get_active_selection failed: {exc}")
-        return {
-            "content": [{"type": "text", "text": f"Error: {exc}\n{tb}"}],
-            "isError": True,
-        }
+        log(f"[MCP] get_active_selection failed: {exc!r}")
+        return internal_error(exc, "get_active_selection")
 
 
 def _safe_attr(obj, name):

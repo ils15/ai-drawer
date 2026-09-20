@@ -20,6 +20,25 @@ interface Harness {
   close: () => Promise<void>;
 }
 
+/** The envelope the bridge emits: error_kind + message + hint, in that order. */
+interface ErrorEnvelope {
+  readonly error_kind: string;
+  readonly message: string;
+  readonly hint: string;
+}
+
+/** Parses a tool result's content, asserting it is one structured error envelope. */
+function errorEnvelope(result: CallToolResult): ErrorEnvelope {
+  expect(result.isError).toBe(true);
+  expect(result.content).toHaveLength(1);
+  expect(result.content[0]?.type).toBe("text");
+  const body = JSON.parse((result.content[0] as { text: string }).text) as Record<string, unknown>;
+  expect(Object.keys(body).sort()).toEqual(["error_kind", "hint", "message"]);
+  expect((body.message as string).length).toBeGreaterThan(0);
+  expect((body.hint as string).length).toBeGreaterThan(0);
+  return body as unknown as ErrorEnvelope;
+}
+
 async function harness(): Promise<Harness> {
   const bridge = await createBridgeServer();
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -95,18 +114,18 @@ describe("bridge server", () => {
       expect(names).toContain("fusion_health");
       // A promoted Wave-2 tool must survive the filter, not just Wave-1 names.
       expect(names).toContain("list_parameters");
-      expect(names).toHaveLength(19);
+      expect(names).toHaveLength(21);
       expect(events.some((event) => event.tool === "execute_python")).toBe(true);
     } finally {
       await harness_.close();
     }
   });
 
-  it("keeps the full live surface visible: 18 add-in tools plus fusion_health", async () => {
+  it("keeps the full live surface visible: 19 add-in tools plus the bridge-owned probes", async () => {
     const harness_ = await harness();
     try {
       const names = (await harness_.client.listTools()).tools.map((tool) => tool.name);
-      expect(names).toHaveLength(19);
+      expect(names).toHaveLength(21);
       expect(names).toEqual(
         expect.arrayContaining([
           // Wave-1: viewport, selection, documentation.
@@ -129,8 +148,11 @@ describe("bridge server", () => {
           "list_parameters",
           "add_parameter",
           "modify_parameter",
-          // Bridge-owned.
+          // Wave-2 diagnostics.
+          "fusion_diagnostics",
+          // Bridge-owned; answered locally, never forwarded.
           "fusion_health",
+          "list_tool_categories",
         ]),
       );
     } finally {
@@ -161,6 +183,40 @@ describe("bridge server", () => {
     }
   });
 
+  it("answers list_tool_categories locally and never forwards it", async () => {
+    const harness_ = await harness();
+    try {
+      const forwardedBefore = addin.forwardedCalls.length;
+      const result: CallToolResult = await harness_.client.callTool({ name: "list_tool_categories" });
+
+      expect(result.isError).not.toBe(true);
+      const report = JSON.parse((result.content[0] as { text: string }).text) as {
+        categories: Array<{ name: string; description: string; tools: string[] }>;
+        total_tools: number;
+      };
+      expect(report.total_tools).toBe(21);
+      // The closed category set the add-in declares, nothing outside it.
+      expect(report.categories.map((category) => category.name)).toEqual([
+        "viewport",
+        "selection",
+        "documents",
+        "parameters",
+        "documentation",
+        "diagnostics",
+      ]);
+      // Every live tool is classified exactly once across the categories.
+      const classified = report.categories.flatMap((category) => category.tools);
+      expect(classified).toHaveLength(21);
+      expect(new Set(classified).size).toBe(21);
+      // PENDING and BLOCKED_HARD names can never be surfaced.
+      expect(classified).not.toContain("create_sketch");
+      expect(classified).not.toContain("execute_python");
+      expect(addin.forwardedCalls.length).toBe(forwardedBefore);
+    } finally {
+      await harness_.close();
+    }
+  });
+
   it("rejects a blocked tool call with an isError result", async () => {
     const harness_ = await harness();
     try {
@@ -169,23 +225,30 @@ describe("bridge server", () => {
         arguments: { code: "print('pwned')" },
       });
 
-      expect(result.isError).toBe(true);
-      expect((result.content[0] as { text: string }).text).toContain("execute_python");
+      const body = errorEnvelope(result);
+      expect(body.error_kind).toBe("blocked_hard");
+      expect(body.message).toContain("execute_python");
+      expect(body.hint).toContain("tools/list");
       expect(events.some((event) => event.tool === "execute_python")).toBe(true);
+      // The refused arguments must not be echoed back into the error body.
+      expect(JSON.stringify(result)).not.toMatch(/print\('pwned'\)/);
     } finally {
       await harness_.close();
     }
   });
 
-  it("rejects a pending Wave-3 tool", async () => {
+  it("rejects a pending Wave-3 tool with the pending_wave3 kind", async () => {
     const harness_ = await harness();
     try {
       const result: CallToolResult = await harness_.client.callTool({
         name: "extrude",
         arguments: { profile: "x" },
       });
-      expect(result.isError).toBe(true);
-      expect((result.content[0] as { text: string }).text).toContain("extrude");
+
+      const body = errorEnvelope(result);
+      expect(body.error_kind).toBe("pending_wave3");
+      expect(body.message).toContain("extrude");
+      expect(body.message).toContain("not available yet");
     } finally {
       await harness_.close();
     }
@@ -206,7 +269,45 @@ describe("bridge server", () => {
     }
   });
 
-  it("validates a Wave-2 tool's arguments before forwarding", async () => {
+  it("reports invalid_arguments when an unknown argument key slips in", async () => {
+    const harness_ = await harness();
+    try {
+      const result: CallToolResult = await harness_.client.callTool({
+        name: "close_document",
+        // .strict() rejects an unknown key instead of silently stripping it; an
+        // object with the right shape still reaches zod, unlike a non-object
+        // payload which the SDK refuses client-side before the bridge sees it.
+        arguments: { save: false, force_close: true },
+      });
+
+      const body = errorEnvelope(result);
+      expect(body.error_kind).toBe("invalid_arguments");
+      expect(body.message).toContain("close_document");
+      expect(body.hint).toContain("force_close");
+      expect(addin.forwardedCalls).not.toContain("close_document");
+    } finally {
+      await harness_.close();
+    }
+  });
+
+  it("rejects an unknown tool with the not_allowed kind", async () => {
+    const harness_ = await harness();
+    try {
+      const result: CallToolResult = await harness_.client.callTool({
+        name: "definitely_not_a_tool",
+        arguments: {},
+      });
+
+      const body = errorEnvelope(result);
+      expect(body.error_kind).toBe("not_allowed");
+      expect(body.message).toContain("definitely_not_a_tool");
+      expect(body.hint).toContain("tools/list");
+    } finally {
+      await harness_.close();
+    }
+  });
+
+  it("reports invalid_arguments with the failing field path in the hint", async () => {
     const harness_ = await harness();
     try {
       const result: CallToolResult = await harness_.client.callTool({
@@ -214,37 +315,30 @@ describe("bridge server", () => {
         // design_type must be parametric or direct; "blueprint" is neither.
         arguments: { name: "Bracket", design_type: "blueprint" },
       });
-      expect(result.isError).toBe(true);
-      expect((result.content[0] as { text: string }).text).toContain("Invalid arguments");
+
+      const body = errorEnvelope(result);
+      expect(body.error_kind).toBe("invalid_arguments");
+      expect(body.message).toContain("new_document");
+      // The field path, not a stack, is what tells the LLM what to fix.
+      expect(body.hint).toContain("design_type");
+      expect(body.hint).not.toMatch(/at Object\.|Traceback/);
       expect(addin.forwardedCalls).not.toContain("new_document");
     } finally {
       await harness_.close();
     }
   });
 
-  it("rejects an unknown tool", async () => {
-    const harness_ = await harness();
-    try {
-      const result: CallToolResult = await harness_.client.callTool({
-        name: "definitely_not_a_tool",
-        arguments: {},
-      });
-      expect(result.isError).toBe(true);
-    } finally {
-      await harness_.close();
-    }
-  });
-
-  it("validates tool arguments with zod before forwarding", async () => {
+  it("reports invalid_arguments for a nested field path", async () => {
     const harness_ = await harness();
     try {
       const result: CallToolResult = await harness_.client.callTool({
         name: "set_viewport",
-        arguments: { width: "wide" },
+        arguments: { camera: { eye: "not-a-point" } },
       });
-      expect(result.isError).toBe(true);
-      const text = (result.content[0] as { text: string }).text;
-      expect(text).toContain("Invalid arguments");
+
+      const body = errorEnvelope(result);
+      expect(body.error_kind).toBe("invalid_arguments");
+      expect(body.hint).toContain("camera.eye");
       expect(addin.forwardedCalls).not.toContain("set_viewport");
     } finally {
       await harness_.close();
@@ -279,8 +373,76 @@ describe("bridge server", () => {
         name: "capture_viewport",
         arguments: {},
       });
+
+      const body = errorEnvelope(result);
+      expect(body.error_kind).toBe("tool_failed");
+      expect(body.message).toContain("failed (code -32603)");
+    } finally {
+      await harness_.close();
+    }
+  });
+
+  it("never echoes the add-in's exception message or traceback", async () => {
+    // lib/mcp_server.py's dispatch catch-all builds `message` from str(exc) and
+    // puts the traceback in `data`. Neither may reach the LLM.
+    const leaky = {
+      code: -32603,
+      message: "Internal error: ValueError('boom')",
+      data: ["Traceback (most recent call last):", '  File "tools.py", line 42, in handle', "ValueError: boom"].join(
+        "\n",
+      ),
+    };
+    const port = addin.port;
+    await addin.close();
+    addin = new FakeAddin({ mode: "json", port, leakyToolError: leaky });
+    await addin.start();
+    resetResolvedHost();
+
+    const harness_ = await harness();
+    try {
+      const result: CallToolResult = await harness_.client.callTool({
+        name: "capture_viewport",
+        arguments: {},
+      });
+
+      const body = errorEnvelope(result);
+      expect(body.error_kind).toBe("tool_failed");
+      expect(body.message).toContain("code -32603");
+      expect(body.hint.length).toBeGreaterThan(0);
+
+      const whole = JSON.stringify(result);
+      expect(whole).not.toMatch(/Traceback/);
+      expect(whole).not.toMatch(/ValueError/);
+      expect(whole).not.toMatch(/Internal error:/);
+      expect(whole).not.toMatch(/tools\.py/);
+    } finally {
+      await harness_.close();
+    }
+  });
+
+  it("surfaces an add-in structured error envelope unchanged", async () => {
+    // The add-in's own envelope (error_kind/message/hint) is its contract with
+    // the LLM; the bridge passes it through, never re-wrapping or rewording it.
+    const addinEnvelope = {
+      error_kind: "no_active_document",
+      message: "No active Fusion document is open for this operation.",
+      hint: "Open or create a Fusion design document first, then retry the call.",
+    };
+    const port = addin.port;
+    await addin.close();
+    addin = new FakeAddin({ mode: "json", port, structuredToolError: addinEnvelope });
+    await addin.start();
+    resetResolvedHost();
+
+    const harness_ = await harness();
+    try {
+      const result: CallToolResult = await harness_.client.callTool({
+        name: "export_document",
+        arguments: { format: "stl", path: "/tmp/out.stl" },
+      });
+
       expect(result.isError).toBe(true);
-      expect((result.content[0] as { text: string }).text).toContain("failed (code -32603)");
+      expect((result.content[0] as { text: string }).text).toBe(JSON.stringify(addinEnvelope, null, 2));
     } finally {
       await harness_.close();
     }
@@ -297,24 +459,54 @@ describe("bridge server", () => {
         name: "capture_viewport",
         arguments: {},
       });
-      expect(result.isError).toBe(true);
-      const text = (result.content[0] as { text: string }).text;
-      expect(text).toContain(`Fusion 360 is not reachable at 127.0.0.1:${port}`);
-      expect(text).toContain("AutodeskFusionMCP");
-      expect(text).toContain("FUSION_MCP_HOST");
+
+      const body = errorEnvelope(result);
+      expect(body.error_kind).toBe("addin_unreachable");
+      expect(body.message).toContain(`Fusion 360 is not reachable at 127.0.0.1:${port}`);
+      expect(body.hint).toContain("AutodeskFusionMCP");
+      expect(body.hint).toContain("FUSION_MCP_HOST");
     } finally {
       await harness_.close();
     }
   });
 
-  it("still lists fusion_health when the add-in is down", async () => {
+  it("maps an HTTP 403 add-in onto addin_forbidden, not an outage", async () => {
+    const port = addin.port;
+    await addin.close();
+    // forceToolCallStatus, not forceStatus: a GLOBAL 403 refuses the ping probe
+    // too, and the state machine legitimately collapses that to unreachable
+    // (probe failure ⇒ tier (c)). Refusing only tools/call is the shape that
+    // reaches the forbidden tier, so connection.ts needs no change.
+    addin = new FakeAddin({ mode: "json", port, forceToolCallStatus: 403 });
+    await addin.start();
+    resetResolvedHost();
+
+    const harness_ = await harness();
+    try {
+      const result: CallToolResult = await harness_.client.callTool({
+        name: "capture_viewport",
+        arguments: {},
+      });
+
+      const body = errorEnvelope(result);
+      expect(body.error_kind).toBe("addin_forbidden");
+      expect(body.message).toContain(`rejected the request (HTTP 403)`);
+      expect(body.message).toContain("Origin header, not the host");
+    } finally {
+      await harness_.close();
+    }
+  });
+
+  it("still lists the bridge-owned probes when the add-in is down", async () => {
     await addin.close();
     resetResolvedHost();
 
     const harness_ = await harness();
     try {
       const names = (await harness_.client.listTools()).tools.map((tool) => tool.name);
-      expect(names).toEqual(["fusion_health"]);
+      // Both bridge-owned helpers stay advertised when the add-in is
+      // unreachable; nothing proxied survives the failed tools/list.
+      expect(names).toEqual(["fusion_health", "list_tool_categories"]);
     } finally {
       await harness_.close();
     }

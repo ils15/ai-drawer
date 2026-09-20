@@ -27,6 +27,14 @@ const artifact = resolve(here, "addin-tool-surface.json");
 // Extract the tool surface from the live Python source. Importing the module
 // resolves every constant (DESIGN_TYPES, STL_UNITS, POINT_SCHEMA, ...) and
 // comprehension, so the dump is exactly what the add-in advertises.
+//
+// The artifact documents the STRUCTURAL contract (properties, required, enum,
+// bounds, additionalProperties, examples) plus each tool's category. A tool's
+// prose description is carried at the tool level and checked separately by the
+// drift guard, so the redundant summary the add-in writes at the root of
+// inputSchema is dropped here — keeping the artifact self-consistent with the
+// guard's schema comparison, which compares inputSchema with the root
+// description stripped.
 const script = `
 import json, sys
 sys.path.insert(0, ${JSON.stringify(addinPkg)})
@@ -34,23 +42,31 @@ import tool_surface
 
 defs = []
 for t in tool_surface.TOOL_DEFINITIONS:
+    schema = {k: v for k, v in t["inputSchema"].items() if k != "description"}
     defs.append({
         "name": t["name"],
+        "category": t["category"],
         "description": t["description"],
-        "inputSchema": t["inputSchema"],
+        "inputSchema": schema,
     })
 json.dump({"generated_from": "packages/addin/fusion_bridge/tool_surface.py",
            "tools": defs}, sys.stdout, indent=2, sort_keys=False)
 sys.stdout.write("\\n")
 `;
 
+// Bridge-owned tools are answered by the bridge and must never be attributed to
+// the add-in: the artifact is the add-in's surface and nothing else.
+const BRIDGE_OWNED = new Set(["fusion_health", "list_tool_categories"]);
+
 /** Verifies the generated blob before it is committed. */
 function validate(text) {
   const parsed = JSON.parse(text);
   const names = parsed.tools.map((tool) => tool.name);
-  if (names.length !== 18) throw new Error(`expected 18 add-in tools, got ${names.length}`);
+  if (names.length !== 19) throw new Error(`expected 19 add-in tools, got ${names.length}`);
   const dupes = names.filter((name, index) => names.indexOf(name) !== index);
   if (dupes.length > 0) throw new Error(`duplicate tool names in artifact: ${dupes.join(", ")}`);
+  const leaked = names.filter((name) => BRIDGE_OWNED.has(name));
+  if (leaked.length > 0) throw new Error(`bridge-owned tools must not appear in the artifact: ${leaked.join(", ")}`);
 }
 
 /**

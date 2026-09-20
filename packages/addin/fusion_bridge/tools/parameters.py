@@ -4,10 +4,11 @@ import adsk.core
 
 from . import (
     active_design,
-    error_result,
+    map_tool_errors,
     optional_str,
     require,
     safe_get,
+    structured_error,
     success_result,
 )
 
@@ -54,57 +55,78 @@ def _find_parameter(design, name):
     return None
 
 
+_NO_DESIGN = "No active Fusion design; open or create a document first"
+
+
+@map_tool_errors
 def list_parameters(arguments):
     """List every user and model parameter in the active design.
 
     ``value`` is the evaluated number in the parameter's internal units
     (centimeters for lengths); ``expression`` is the Fusion expression string.
     """
-    try:
-        design = active_design()
-        if design is None:
-            return error_result("Error: no active Fusion design; open or create a document first")
-        params = [
-            *_collect_parameters(safe_get(design, "userParameters"), "user"),
-            *_collect_parameters(safe_get(design, "modelParameters"), "model"),
-        ]
-        return success_result({"count": len(params), "parameters": params})
-    except Exception as exc:
-        return error_result(f"Error listing parameters: {exc}")
+    del arguments
+    design = active_design()
+    if design is None:
+        return structured_error("no_active_document", _NO_DESIGN)
+    params = [
+        *_collect_parameters(safe_get(design, "userParameters"), "user"),
+        *_collect_parameters(safe_get(design, "modelParameters"), "model"),
+    ]
+    return success_result({"count": len(params), "parameters": params})
 
 
+@map_tool_errors
 def add_parameter(arguments):
     """Add a user parameter driven by a Fusion expression string."""
+    name = require(arguments, "name")["name"]
+    expression = require(arguments, "expression")["expression"]
+    unit = optional_str(arguments, "unit") or DEFAULT_PARAMETER_UNIT
+    design = active_design()
+    if design is None:
+        return structured_error("no_active_document", _NO_DESIGN)
+    user_parameters = safe_get(design, "userParameters")
+    if user_parameters is None:
+        return structured_error(
+            "internal", "The active design has no user parameter collection"
+        )
+    if _find_parameter(design, name) is not None:
+        return structured_error(
+            "parameter_already_exists",
+            f"A parameter named '{name}' already exists in the active design",
+        )
     try:
-        name = require(arguments, "name")["name"]
-        expression = require(arguments, "expression")["expression"]
-        unit = optional_str(arguments, "unit") or DEFAULT_PARAMETER_UNIT
-        design = active_design()
-        if design is None:
-            return error_result("Error: no active Fusion design; open or create a document first")
-        user_parameters = safe_get(design, "userParameters")
-        if user_parameters is None:
-            return error_result("Error: the active design has no user parameter collection")
-        if _find_parameter(design, name) is not None:
-            return error_result(f"Error: a parameter named '{name}' already exists in the active design")
-        try:
-            value_input = adsk.core.ValueInput.createByString(str(expression))
-            param = user_parameters.add(name, value_input, unit, "")
-        except Exception as exc:
-            return error_result(
-                f"Error: Fusion refused to create parameter '{name}' (check the expression and unit): {exc}"
+        value_input = adsk.core.ValueInput.createByString(str(expression))
+        param = user_parameters.add(name, value_input, unit, "")
+    except ValueError as exc:
+        # Fusion itself reports a duplicate name when the caller races another
+        # client; report it as a duplicate rather than a bad expression.
+        if "already exists" in str(exc):
+            return structured_error(
+                "parameter_already_exists",
+                f"A parameter named '{name}' already exists in the active design",
             )
-        if param is None:
-            return error_result(f"Error: Fusion refused to create parameter '{name}'")
-        return success_result({
-            "name": safe_get(param, "name"),
-            "expression": safe_get(param, "expression"),
-            "value": safe_get(param, "value"),
-        })
-    except Exception as exc:
-        return error_result(f"Error adding parameter: {exc}")
+        return structured_error(
+            "invalid_expression",
+            f"Fusion rejected the expression or unit for '{name}' (check the expression and unit)",
+        )
+    except Exception:
+        return structured_error(
+            "invalid_expression",
+            f"Fusion rejected the expression or unit for '{name}' (check the expression and unit)",
+        )
+    if param is None:
+        return structured_error(
+            "invalid_expression", f"Fusion refused to create parameter '{name}'"
+        )
+    return success_result({
+        "name": safe_get(param, "name"),
+        "expression": safe_get(param, "expression"),
+        "value": safe_get(param, "value"),
+    })
 
 
+@map_tool_errors
 def modify_parameter(arguments):
     """Set a parameter's expression and recompute the model.
 
@@ -113,31 +135,32 @@ def modify_parameter(arguments):
     features that re-evaluated; it is null when the running Fusion cannot
     report per-feature recompute counts.
     """
+    name = require(arguments, "name")["name"]
+    expression = require(arguments, "expression")["expression"]
+    design = active_design()
+    if design is None:
+        return structured_error("no_active_document", _NO_DESIGN)
+    param = _find_parameter(design, name)
+    if param is None:
+        return structured_error(
+            "parameter_not_found", f"No parameter named '{name}' in the active design"
+        )
     try:
-        name = require(arguments, "name")["name"]
-        expression = require(arguments, "expression")["expression"]
-        design = active_design()
-        if design is None:
-            return error_result("Error: no active Fusion design; open or create a document first")
-        param = _find_parameter(design, name)
-        if param is None:
-            return error_result(f"Error: no parameter named '{name}' in the active design")
-        try:
-            param.expression = str(expression)
-        except Exception as exc:
-            return error_result(f"Error: Fusion rejected the expression for '{name}': {exc}")
-        did_recompute = False
-        recomputed = None
-        compute_all = getattr(design, "computeAll", None)
-        if callable(compute_all):
-            did_recompute = bool(compute_all())
-            recomputed = safe_get(design, "recomputedFeatureCount")
-        return success_result({
-            "name": name,
-            "expression": safe_get(param, "expression"),
-            "value": safe_get(param, "value"),
-            "did_recompute": did_recompute,
-            "recomputed_feature_count": recomputed,
-        })
-    except Exception as exc:
-        return error_result(f"Error modifying parameter: {exc}")
+        param.expression = str(expression)
+    except Exception:
+        return structured_error(
+            "invalid_expression", f"Fusion rejected the expression for '{name}'"
+        )
+    did_recompute = False
+    recomputed = None
+    compute_all = getattr(design, "computeAll", None)
+    if callable(compute_all):
+        did_recompute = bool(compute_all())
+        recomputed = safe_get(design, "recomputedFeatureCount")
+    return success_result({
+        "name": name,
+        "expression": safe_get(param, "expression"),
+        "value": safe_get(param, "value"),
+        "did_recompute": did_recompute,
+        "recomputed_feature_count": recomputed,
+    })

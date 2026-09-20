@@ -4,13 +4,13 @@ import contextlib
 import queue
 import threading
 import time
-import traceback
 from datetime import datetime
 
 import adsk.core
 
 from .. import settings
 from ..lib import fusionAddInUtils as futil
+from .errors import internal_error, structured_error
 
 # ── Module state ──────────────────────────────────────────────────────────
 
@@ -241,7 +241,11 @@ def dispatch_to_main_thread(call_data):
         envelope["_request_key"] = request_key
         with _inflight_lock:
             if request_key in _inflight:
-                return _text_result("Error: Request ID is already in flight in this session")
+                return structured_error(
+                    "unsupported_operation",
+                    "A request with this ID is already in flight in this session.",
+                    "Wait for the in-flight request to finish, or cancel it before sending again.",
+                )
             _inflight[request_key] = envelope
             # Publish the envelope before cancellation can find it.
             _pending.put(envelope)
@@ -259,10 +263,7 @@ def dispatch_to_main_thread(call_data):
             f"Failed to fire main-thread event: {exc}",
             adsk.core.LogLevels.ErrorLogLevel,
         )
-        return _text_result(
-            f"Error: RuntimeError: failed to schedule Fusion main-thread "
-            f"work ({exc})"
-        )
+        return internal_error(exc, "main-thread dispatch")
 
     deadline = time.monotonic() + settings.MCP_MAIN_THREAD_TIMEOUT
     while True:
@@ -466,25 +467,9 @@ def _flush_pending():
                     raise RuntimeError("Tool implementation is not initialized")
                 result = _callback_impl(payload)
             except Exception as exc:
-                tb = traceback.format_exc()
-                log(
-                    f"Main-thread work item failed: {exc}",
-                    adsk.core.LogLevels.ErrorLogLevel,
-                )
-                log(tb, adsk.core.LogLevels.ErrorLogLevel)
-                result = {
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": (
-                                f"Error: {type(exc).__name__}: {exc}\n"
-                                "Call: _flush_pending()\n"
-                                f"Traceback:\n{tb}"
-                            ),
-                        }
-                    ],
-                    "isError": True,
-                }
+                # Detail goes to the add-in log only; the client receives a
+                # structured envelope without stack, exception type, or repr.
+                result = internal_error(exc, context="main-thread dispatch")
 
             with envelope["_lock"]:
                 envelope["_state"] = "done"

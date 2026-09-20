@@ -2,7 +2,6 @@
 
 import base64
 import contextlib
-import json
 import math
 import os
 import re
@@ -11,6 +10,9 @@ import tempfile
 import adsk.core
 
 from ..lib import png_image
+from .dispatch import log
+from .errors import internal_error, structured_error
+from .value_builders import success_result
 
 VIEW_NAMES = {
     "front": "FrontViewOrientation", "back": "BackViewOrientation",
@@ -26,12 +28,19 @@ PROJECTIONS = {
 }
 
 
-def _fail(message):
-    return {"content": [{"type": "text", "text": str(message)}], "isError": True}
+def _restore_camera(vp, original):
+    """Best-effort camera restoration after a viewport change failed.
 
-
-def _success(payload):
-    return {"content": [{"type": "text", "text": json.dumps(payload, indent=2)}], "isError": False}
+    Returns nothing; a restoration failure is logged (never returned to the
+    client) so the caller can still report the error that caused it.
+    """
+    if vp is None or original is None:
+        return
+    try:
+        vp.camera = original
+        vp.refresh()
+    except Exception as exc:
+        log(f"[viewport] restoring the camera after a failure also failed: {exc!r}")
 
 
 def _viewport():
@@ -134,10 +143,13 @@ def _state(vp):
 
 def get_viewport(arguments):
     """Return a camera snapshot that can be passed back to set_viewport."""
+    del arguments
     try:
-        return _success(_state(_viewport()))
+        return success_result(_state(_viewport()))
+    except ValueError as exc:
+        return structured_error("invalid_value", str(exc))
     except Exception as exc:
-        return _fail(f"Error reading viewport: {exc}")
+        return internal_error(exc, "get_viewport")
 
 
 def _validate_controls(arguments):
@@ -247,15 +259,13 @@ def set_viewport(arguments):
         original = vp.camera
         original.isSmoothTransition = False
         _apply_controls(vp, arguments)
-        return _success(_state(vp))
+        return success_result(_state(vp))
+    except ValueError as exc:
+        _restore_camera(vp, original)
+        return structured_error("invalid_value", str(exc))
     except Exception as exc:
-        if vp is not None and original is not None:
-            try:
-                vp.camera = original
-                vp.refresh()
-            except Exception as restore_error:
-                return _fail(f"Error changing viewport: {exc}; restoring the camera also failed: {restore_error}")
-        return _fail(f"Error changing viewport: {exc}")
+        _restore_camera(vp, original)
+        return internal_error(exc, "set_viewport")
 
 
 def _dimension(value, name):
@@ -328,8 +338,10 @@ def capture(arguments):
             ],
             "isError": False,
         }
+    except ValueError as exc:
+        result = structured_error("invalid_value", str(exc))
     except Exception as exc:
-        result = _fail(f"Error capturing viewport: {exc}")
+        result = internal_error(exc, "capture_viewport")
     finally:
         if path:
             with contextlib.suppress(OSError):
@@ -339,5 +351,5 @@ def capture(arguments):
                 vp.camera = original
                 vp.refresh()
             except Exception as exc:
-                result = _fail(f"Capture finished but restoring the camera failed: {exc}")
+                result = internal_error(exc, "capture_viewport")
     return result

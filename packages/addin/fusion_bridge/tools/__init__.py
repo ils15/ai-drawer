@@ -6,29 +6,73 @@ the same shape as ``viewport.py`` and ``selection.py``.  Handlers always run
 on the Fusion main thread (the server reaches them through ``dispatch.py``'s
 queue), so they may touch ``adsk`` objects directly.
 
+Errors are structured (see :mod:`fusion_bridge.errors`): a handler reports a
+business rule with :func:`structured_error` and lets :func:`map_tool_errors`
+turn any stray exception into the right kind, so a missing argument and a bad
+value can never be confused and an unexpected failure never leaks its
+traceback into the response.
+
 ``adsk`` members are resolved at *call* time (``adsk.fusion.Design.cast``),
 never bound with ``from ... import ...``, so a test double installed after
 this module is imported is still picked up.
 """
 
+import functools
+
 import adsk.core
 import adsk.fusion
 
 from ..dispatch import get_app
-from ..value_builders import error_result, safe_get, success_result
+from ..errors import internal_error, structured_error
+from ..value_builders import safe_get, success_result
 
 __all__ = [
     "active_app",
     "active_design",
     "active_document",
     "active_product",
-    "error_result",
+    "map_tool_errors",
+    "MissingArgument",
     "optional_bool",
     "optional_str",
     "require",
     "safe_get",
+    "structured_error",
     "success_result",
 ]
+
+
+class MissingArgument(ValueError):
+    """Raised by :func:`require` when a required argument is absent or empty.
+
+    A subclass of ``ValueError`` so existing ``except ValueError`` sites keep
+    working, but distinct so a handler can tell "the caller forgot an
+    argument" (:data:`~fusion_bridge.errors.ERROR_KINDS` ``missing_argument``)
+    from "the caller passed a bad one" (``invalid_value``).
+    """
+
+
+def map_tool_errors(fn):
+    """Turn a handler's stray exceptions into structured errors.
+
+    Wrapping the *whole* handler means business rules can ``return`` their
+    own kind and never repeat try/except boilerplate, while an unexpected
+    failure still degrades to ``"internal"`` with its detail logged rather
+    than returned.
+    """
+
+    @functools.wraps(fn)
+    def wrapper(arguments):
+        try:
+            return fn(arguments)
+        except MissingArgument as exc:
+            return structured_error("missing_argument", str(exc))
+        except ValueError as exc:
+            return structured_error("invalid_value", str(exc))
+        except Exception as exc:
+            return internal_error(exc, getattr(fn, "__name__", "tool"))
+
+    return wrapper
 
 
 def active_app():
@@ -58,10 +102,10 @@ def active_document():
 
 
 def require(arguments, *names):
-    """Return the named arguments, raising ValueError if any are missing/empty."""
+    """Return the named arguments, raising if any are missing/empty."""
     missing = [name for name in names if not arguments.get(name)]
     if missing:
-        raise ValueError(f"missing required argument(s): {', '.join(missing)}")
+        raise MissingArgument(f"missing required argument(s): {', '.join(missing)}")
     return {name: arguments[name] for name in names}
 
 

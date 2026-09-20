@@ -112,7 +112,7 @@ class HandleAnyToolTimingTests(unittest.TestCase):
             r"^\[MCP\] " + re.escape(self.TOOL) + r" completed in \d",
         )
 
-    def test_error_result_logs_failed(self):
+    def test_failed_result_logs_failed_with_duration(self):
         operations.TOOL_HANDLERS[self.TOOL] = lambda cd: {"content": [], "isError": True}
         self._call()
         self.assertIn("failed in", self._logs[0])

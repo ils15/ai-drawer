@@ -10,7 +10,7 @@ import unittest
 
 import _fusion_test_bootstrap  # noqa: F401  (installs adsk mock + parent pkg shim)
 
-from fusion_bridge.doc_lookup import DocumentationProvider
+from fusion_bridge import doc_lookup
 
 
 def _page(body, paragraph='<p class="api">Creates a new sketch.</p>'):
@@ -30,7 +30,7 @@ def _page(body, paragraph='<p class="api">Creates a new sketch.</p>'):
 
 class SyntaxExtractionTests(unittest.TestCase):
     def setUp(self):
-        self.provider = DocumentationProvider()
+        self.provider = doc_lookup.DocumentationProvider()
 
     def _syntax(self, html):
         result = self.provider._extract_all_sections(
@@ -68,7 +68,7 @@ class SectionExtractionTests(unittest.TestCase):
     """Guard the <h2>-driven section parsing we rely on."""
 
     def setUp(self):
-        self.provider = DocumentationProvider()
+        self.provider = doc_lookup.DocumentationProvider()
 
     def test_description_with_class_attribute_is_parsed(self):
         # Live markup is <p class="api">; a bare <p> match returned nothing.
@@ -132,7 +132,7 @@ class PropertyPageTests(unittest.TestCase):
     """Property pages carry prose under 'Property Value', not a table."""
 
     def setUp(self):
-        self.provider = DocumentationProvider()
+        self.provider = doc_lookup.DocumentationProvider()
 
     def _parse(self, html):
         return self.provider._extract_all_sections(
@@ -189,7 +189,7 @@ class ClassPageTests(unittest.TestCase):
     """Class pages list members in tables that were previously discarded."""
 
     def setUp(self):
-        self.provider = DocumentationProvider()
+        self.provider = doc_lookup.DocumentationProvider()
 
     def _parse(self, html):
         return self.provider._extract_all_sections(
@@ -230,7 +230,7 @@ class PreviewFlagTests(unittest.TestCase):
     """Preview classes get renamed without deprecation, so callers need this."""
 
     def setUp(self):
-        self.provider = DocumentationProvider()
+        self.provider = doc_lookup.DocumentationProvider()
 
     def _preview(self, html):
         return self.provider._extract_all_sections(
@@ -283,7 +283,7 @@ class PreviewFlagTests(unittest.TestCase):
 
 class SamplesTests(unittest.TestCase):
     def setUp(self):
-        self.provider = DocumentationProvider()
+        self.provider = doc_lookup.DocumentationProvider()
 
     def test_each_sample_gets_its_own_url(self):
         # Regression: the href was searched across the whole section, so every

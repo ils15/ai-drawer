@@ -9,7 +9,7 @@ from . import (
     active_design,
     active_document,
     bool_or_none,
-    error_result,
+    map_tool_errors,
     safe_get,
     success_result,
 )
@@ -93,42 +93,40 @@ def _document_summary(document):
     }
 
 
+@map_tool_errors
 def fusion_status(arguments):
     """Report the Fusion version, active document/design, units, and timeline size.
 
     Works without an open document: the document-related fields are then null.
     """
-    try:
-        app = active_app()
-        design = active_design()
-        document = active_document()
-        timeline = safe_get(design, "timeline")
-        workspace = safe_get(safe_get(app, "userInterface"), "activeWorkspace")
-        payload = {
-            "fusion_version": safe_get(app, "version"),
-            "document_name": safe_get(document, "name"),
-            "is_modified": bool_or_none(safe_get(document, "isModified")),
-            "units": _design_units(design),
-            "design_type": _design_type_name(design),
-            "workspace": safe_get(workspace, "name"),
-            "timeline_feature_count": safe_get(timeline, "count"),
-            "addin_uptime_s": round(time.monotonic() - _START_TIME, 3),
-        }
-        return success_result(payload)
-    except Exception as exc:
-        return error_result(f"Error reading Fusion status: {exc}")
+    del arguments
+    app = active_app()
+    design = active_design()
+    document = active_document()
+    timeline = safe_get(design, "timeline")
+    workspace = safe_get(safe_get(app, "userInterface"), "activeWorkspace")
+    payload = {
+        "fusion_version": safe_get(app, "version"),
+        "document_name": safe_get(document, "name"),
+        "is_modified": bool_or_none(safe_get(document, "isModified")),
+        "units": _design_units(design),
+        "design_type": _design_type_name(design),
+        "workspace": safe_get(workspace, "name"),
+        "timeline_feature_count": safe_get(timeline, "count"),
+        "addin_uptime_s": round(time.monotonic() - _START_TIME, 3),
+    }
+    return success_result(payload)
 
 
+@map_tool_errors
 def list_documents(arguments):
     """List every document currently open in Fusion."""
-    try:
-        documents = safe_get(active_app(), "documents")
-        count = safe_get(documents, "count", 0) or 0
-        items = []
-        for index in range(count):
-            summary = _document_summary(documents.item(index))
-            if summary is not None:
-                items.append(summary)
-        return success_result({"count": len(items), "documents": items})
-    except Exception as exc:
-        return error_result(f"Error listing documents: {exc}")
+    del arguments
+    documents = safe_get(active_app(), "documents")
+    count = safe_get(documents, "count", 0) or 0
+    items = []
+    for index in range(count):
+        summary = _document_summary(documents.item(index))
+        if summary is not None:
+            items.append(summary)
+    return success_result({"count": len(items), "documents": items})

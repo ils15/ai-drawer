@@ -9,6 +9,7 @@ import os
 import re
 
 from . import values
+from .failures import FailureInjector
 from .features import FakeBRepBodies, FakeFeatures
 from .geometry import FakeSketches
 
@@ -126,6 +127,10 @@ class _Parameters:
         return self._items[index] if 0 <= index < len(self._items) else None
 
     def itemByName(self, name):
+        # Simulate a Fusion that fails to find a name that is really there, so
+        # the parameter_not_found branch is reachable without deleting data.
+        if self._design._failures.fire("unknown_parameter"):
+            return None
         for parameter in self._items:
             if parameter.name == name:
                 return parameter
@@ -133,6 +138,15 @@ class _Parameters:
 
     def add(self, name, value_input, unit="", comment=""):
         del comment
+        failures = self._design._failures
+        # Simulate Fusion reporting a duplicate for a name that is free, so the
+        # parameter_already_exists branch does not depend on add ordering.
+        if failures.fire("duplicate_parameter"):
+            raise ValueError(f"a parameter named '{name}' already exists")
+        # Simulate the expression engine rejecting an expression it should
+        # accept, so invalid_expression is reachable through the real path.
+        if failures.fire("invalid_expression"):
+            raise ValueError("invalid expression")
         if self.itemByName(name) is not None:
             raise ValueError(f"a parameter named '{name}' already exists")
         expression = getattr(value_input, "expression", None)
@@ -222,6 +236,11 @@ class FakeExportManager:
         return self._options(path, root)
 
     def createPDFExportOptions(self, path):
+        # A Fusion build without the PDF exporter lacks this creator
+        # entirely; returning None lets export_document report
+        # unsupported_operation instead of pretending to succeed.
+        if self._design._failures.fire("no_pdf_export"):
+            return None
         return self._options(path)
 
     def execute(self, options):
@@ -281,12 +300,15 @@ class FakeOccurrence:
 class FakeDesign:
     """``adsk.fusion.Design``: the product of a design document."""
 
-    def __init__(self, timeline=None):
+    def __init__(self, timeline=None, failures=None):
         self.designType = values.DesignTypes.ParametricDesignType
         self.unitsManager = FakeUnitsManager()
         self.fusionUnitsManager = FakeUnitsManager()
         self._timeline = timeline or FakeTimeline()
         self._root = FakeComponent("Root Component", self)
+        # Failure injection (see .failures); a standalone FakeDesign gets its
+        # own injector, which simply never has anything queued.
+        self._failures = failures if failures is not None else FailureInjector()
         self.userParameters = FakeUserParameters(self)
         self.modelParameters = FakeModelParameters(self)
         self.exportManager = FakeExportManager(self)

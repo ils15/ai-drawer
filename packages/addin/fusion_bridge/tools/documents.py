@@ -11,11 +11,12 @@ from . import (
     active_design,
     active_document,
     bool_or_none,
-    error_result,
+    map_tool_errors,
     optional_bool,
     optional_str,
     require,
     safe_get,
+    structured_error,
     success_result,
 )
 from .lifecycle import _design_type_name, _design_units
@@ -79,85 +80,88 @@ def _set_enum(target, prop, enum_class, member):
         setattr(target, prop, value)
 
 
+@map_tool_errors
 def new_document(arguments):
     """Create and activate a new Fusion design document."""
-    try:
-        name = require(arguments, "name")["name"]
-        design_type = _design_type_argument(arguments)
-        documents = safe_get(active_app(), "documents")
-        if documents is None:
-            return error_result("Error: the Fusion document collection is unavailable")
-        document = documents.add(adsk.core.DocumentTypes.FusionDesignDocumentType)
-        if document is None:
-            return error_result("Error: Fusion refused to create a new document")
-        with contextlib.suppress(Exception):
-            document.name = name
-        actual_type = "parametric"
-        if design_type == "direct":
-            design = active_design()
-            member = getattr(adsk.fusion.DesignTypes, "DirectDesignType", None)
-            if design is None or member is None:
-                return error_result("Error: created the document but could not switch it to direct modeling")
-            try:
-                design.designType = member
-            except Exception as exc:
-                return error_result(f"Error: created the document but direct modeling failed: {exc}")
-            actual_type = "direct"
-        return success_result({"document_name": safe_get(document, "name"), "design_type": actual_type})
-    except Exception as exc:
-        return error_result(f"Error creating document: {exc}")
+    name = require(arguments, "name")["name"]
+    design_type = _design_type_argument(arguments)
+    documents = safe_get(active_app(), "documents")
+    if documents is None:
+        return structured_error("internal", "The Fusion document collection is unavailable")
+    document = documents.add(adsk.core.DocumentTypes.FusionDesignDocumentType)
+    if document is None:
+        return structured_error("internal", "Fusion refused to create a new document")
+    with contextlib.suppress(Exception):
+        document.name = name
+    actual_type = "parametric"
+    if design_type == "direct":
+        design = active_design()
+        member = getattr(adsk.fusion.DesignTypes, "DirectDesignType", None)
+        if design is None or member is None:
+            return structured_error(
+                "unsupported_operation",
+                "Created the document but this Fusion build cannot switch it to direct modeling",
+            )
+        try:
+            design.designType = member
+        except Exception:
+            return structured_error(
+                "unsupported_operation",
+                "Created the document but switching it to direct modeling failed",
+            )
+        actual_type = "direct"
+    return success_result({"document_name": safe_get(document, "name"), "design_type": actual_type})
 
 
+@map_tool_errors
 def open_document(arguments):
     """Open a previously saved Fusion file by path."""
-    try:
-        path = require(arguments, "path")["path"]
-        documents = safe_get(active_app(), "documents")
-        if documents is None:
-            return error_result("Error: the Fusion document collection is unavailable")
-        document = documents.open(path)
-        if document is None:
-            return error_result(f"Error: Fusion could not open '{path}' (check the path and file type)")
-        return success_result({
-            "document_name": safe_get(document, "name"),
-            "is_modified": bool_or_none(safe_get(document, "isModified")),
-        })
-    except Exception as exc:
-        return error_result(f"Error opening document: {exc}")
+    path = require(arguments, "path")["path"]
+    documents = safe_get(active_app(), "documents")
+    if documents is None:
+        return structured_error("internal", "The Fusion document collection is unavailable")
+    document = documents.open(path)
+    if document is None:
+        return structured_error(
+            "not_found", f"Fusion could not open '{path}' (check the path and file type)"
+        )
+    return success_result({
+        "document_name": safe_get(document, "name"),
+        "is_modified": bool_or_none(safe_get(document, "isModified")),
+    })
 
 
+@map_tool_errors
 def save_document(arguments):
     """Save the active document in place, or to *path* for a first save / save-as."""
-    try:
-        path = optional_str(arguments, "path")
-        document = active_document()
-        if document is None:
-            return error_result("Error: no active document to save")
-        if path:
-            folder, _, name = path.replace("\\", "/").rpartition("/")
-            try:
-                ok = document.saveAs(name, folder, "", "")
-            except Exception as exc:
-                return error_result(f"Error: Fusion could not save '{path}': {exc}")
-            if not ok:
-                return error_result(f"Error: Fusion could not save '{path}'")
-            saved_path = path
-        else:
-            if not safe_get(document, "isSaved"):
-                return error_result(
-                    "Error: the active document has never been saved; provide a path to save it to"
-                )
-            try:
-                ok = document.save()
-            except Exception as exc:
-                return error_result(f"Error: Fusion could not save the active document: {exc}")
-            if not ok:
-                return error_result("Error: Fusion could not save the active document")
-            data_file = safe_get(document, "dataFile")
-            saved_path = safe_get(data_file, "path")
-        return success_result({"saved_path": saved_path})
-    except Exception as exc:
-        return error_result(f"Error saving document: {exc}")
+    path = optional_str(arguments, "path")
+    document = active_document()
+    if document is None:
+        return structured_error("no_active_document", "No active document to save")
+    if path:
+        folder, _, name = path.replace("\\", "/").rpartition("/")
+        try:
+            ok = document.saveAs(name, folder, "", "")
+        except Exception:
+            return structured_error("io_failure", f"Fusion could not save '{path}'")
+        if not ok:
+            return structured_error("io_failure", f"Fusion could not save '{path}'")
+        saved_path = path
+    else:
+        if not safe_get(document, "isSaved"):
+            return structured_error(
+                "missing_argument",
+                "The active document has never been saved; provide a path to save it to",
+            )
+        try:
+            ok = document.save()
+        except Exception:
+            return structured_error("io_failure", "Fusion could not save the active document")
+        if not ok:
+            return structured_error("io_failure", "Fusion could not save the active document")
+        data_file = safe_get(document, "dataFile")
+        saved_path = safe_get(data_file, "path")
+    return success_result({"saved_path": saved_path})
 
 
 def _build_export_options(manager, design, fmt, path, arguments):
@@ -191,90 +195,89 @@ def _build_export_options(manager, design, fmt, path, arguments):
     return None
 
 
+@map_tool_errors
 def export_document(arguments):
     """Export the active design to STEP, STL, F3D, IGES, OBJ, or PDF."""
+    fmt = require(arguments, "format")["format"]
+    path = require(arguments, "path")["path"]
+    if fmt not in EXPORT_FORMATS:
+        return structured_error(
+            "invalid_value",
+            f"Unsupported export format '{fmt}'; supported: {', '.join(EXPORT_FORMATS)}",
+        )
+    design = active_design()
+    if design is None:
+        return structured_error(
+            "no_export_target",
+            "Exporting requires an active Fusion design; open or create a document first",
+        )
+    manager = safe_get(design, "exportManager")
+    if manager is None:
+        return structured_error("no_export_target", "The active design has no export manager")
+    options = _build_export_options(manager, design, fmt, path, arguments)
+    if options is None:
+        return structured_error(
+            "unsupported_operation",
+            f"This Fusion build cannot export '{fmt}' (the ExportManager lacks the creator)",
+        )
     try:
-        fmt = require(arguments, "format")["format"]
-        path = require(arguments, "path")["path"]
-        if fmt not in EXPORT_FORMATS:
-            return error_result(
-                f"Error: unsupported export format '{fmt}'; supported: {', '.join(EXPORT_FORMATS)}"
-            )
-        design = active_design()
-        if design is None:
-            return error_result(
-                "Error: exporting requires an active Fusion design; open or create a document first"
-            )
-        manager = safe_get(design, "exportManager")
-        if manager is None:
-            return error_result("Error: the active design has no export manager")
-        options = _build_export_options(manager, design, fmt, path, arguments)
-        if options is None:
-            return error_result(
-                f"Error: this Fusion build cannot export '{fmt}' (the ExportManager lacks the creator)"
-            )
-        try:
-            ok = manager.execute(options)
-        except Exception as exc:
-            return error_result(f"Error: Fusion failed to export '{fmt}' to '{path}': {exc}")
-        if not ok:
-            return error_result(f"Error: Fusion failed to export '{fmt}' to '{path}'")
-        result = {"path": path, "format": fmt, "size_bytes": _file_size(path)}
-        if fmt == "stl":
-            result["stl_density"] = arguments.get("stl_density", "medium")
-            units = arguments.get("stl_units")
-            if units:
-                result["stl_units"] = units
-        return success_result(result)
-    except Exception as exc:
-        return error_result(f"Error exporting document: {exc}")
+        ok = manager.execute(options)
+    except Exception:
+        return structured_error("io_failure", f"Fusion failed to export '{fmt}' to '{path}'")
+    if not ok:
+        return structured_error("io_failure", f"Fusion failed to export '{fmt}' to '{path}'")
+    result = {"path": path, "format": fmt, "size_bytes": _file_size(path)}
+    if fmt == "stl":
+        result["stl_density"] = arguments.get("stl_density", "medium")
+        units = arguments.get("stl_units")
+        if units:
+            result["stl_units"] = units
+    return success_result(result)
 
 
+@map_tool_errors
 def close_document(arguments):
     """Close the active document, or the one named by *document_name*."""
-    try:
-        save = optional_bool(arguments, "save")
-        document = active_document()
+    save = optional_bool(arguments, "save")
+    document = active_document()
+    if document is None:
+        return structured_error("no_active_document", "No active document to close")
+    name = optional_str(arguments, "document_name")
+    if name:
+        document = _find_document(safe_get(active_app(), "documents"), name)
         if document is None:
-            return error_result("Error: no active document to close")
-        name = optional_str(arguments, "document_name")
-        if name:
-            document = _find_document(safe_get(active_app(), "documents"), name)
-            if document is None:
-                return error_result(f"Error: no open document named '{name}'")
-        if save:
-            if not safe_get(document, "isSaved"):
-                return error_result(
-                    "Error: cannot save an unsaved document while closing; save it to a path first"
-                )
-            try:
-                document.save()
-            except Exception as exc:
-                return error_result(f"Error: saving before close failed: {exc}")
+            return structured_error("not_found", f"No open document named '{name}'")
+    if save:
+        if not safe_get(document, "isSaved"):
+            return structured_error(
+                "unsupported_operation",
+                "Cannot save an unsaved document while closing; save it to a path first",
+            )
         try:
-            closed = document.close(False)
-        except Exception as exc:
-            return error_result(f"Error: Fusion could not close the document: {exc}")
-        return success_result({"closed": bool(closed)})
-    except Exception as exc:
-        return error_result(f"Error closing document: {exc}")
+            document.save()
+        except Exception:
+            return structured_error("io_failure", "Saving before close failed")
+    try:
+        closed = document.close(False)
+    except Exception:
+        return structured_error("internal", "Fusion could not close the document")
+    return success_result({"closed": bool(closed)})
 
 
+@map_tool_errors
 def get_document_info(arguments):
     """Report name, path, units, design type, modified flag, and version."""
-    try:
-        document = active_document()
-        if document is None:
-            return error_result("Error: no active document")
-        design = active_design()
-        data_file = safe_get(document, "dataFile")
-        return success_result({
-            "name": safe_get(document, "name"),
-            "path": safe_get(data_file, "path"),
-            "units": _design_units(design),
-            "design_type": _design_type_name(design),
-            "is_modified": bool_or_none(safe_get(document, "isModified")),
-            "version": safe_get(data_file, "version"),
-        })
-    except Exception as exc:
-        return error_result(f"Error reading document info: {exc}")
+    del arguments
+    document = active_document()
+    if document is None:
+        return structured_error("no_active_document", "No active document")
+    design = active_design()
+    data_file = safe_get(document, "dataFile")
+    return success_result({
+        "name": safe_get(document, "name"),
+        "path": safe_get(data_file, "path"),
+        "units": _design_units(design),
+        "design_type": _design_type_name(design),
+        "is_modified": bool_or_none(safe_get(document, "isModified")),
+        "version": safe_get(data_file, "version"),
+    })

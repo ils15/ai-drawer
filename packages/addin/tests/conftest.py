@@ -49,20 +49,40 @@ def fusion_empty():
 
 
 class _ResponseHelper:
-    """Reads MCP response envelopes the way tool tests need to."""
+    """Reads MCP response envelopes the way tool tests need to.
+
+    Both success and error responses carry a JSON payload in
+    ``content[0].text``: a success has the tool's result document, an error
+    has the ``{"error_kind", "message", "hint"}`` envelope.  ``error()``
+    returns the envelope's ``message`` so prose assertions keep working, and
+    ``error_kind()`` returns the stable taxonomy name tests should branch on.
+    """
 
     def text(self, response):
         return response["content"][0]["text"]
 
-    def ok(self, response):
-        assert not response.get("isError"), response
+    def _envelope(self, response):
         import json
 
         return json.loads(self.text(response))
 
+    def ok(self, response):
+        assert not response.get("isError"), response
+        return self._envelope(response)
+
     def error(self, response):
         assert response.get("isError"), response
-        return self.text(response)
+        return self._envelope(response).get("message", "")
+
+    def error_kind(self, response):
+        """Return the structured ``error_kind`` of an error response."""
+        assert response.get("isError"), response
+        return self._envelope(response).get("error_kind")
+
+    def error_hint(self, response):
+        """Return the actionable ``hint`` of an error response."""
+        assert response.get("isError"), response
+        return self._envelope(response).get("hint", "")
 
 
 @pytest.fixture

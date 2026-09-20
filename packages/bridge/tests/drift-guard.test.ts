@@ -22,7 +22,8 @@
 
 import { expect, it } from "vitest";
 import { z } from "zod";
-import { ALLOWED, BLOCKED_HARD, HEALTH_TOOL, PENDING } from "../src/allowlist.js";
+import { ALLOWED, BLOCKED_HARD, CATEGORY_TOOL, HEALTH_TOOL, PENDING } from "../src/allowlist.js";
+import { CATEGORY_BY_TOOL, TOOL_CATEGORIES } from "../src/categories.js";
 // server.ts keeps TOOL_ARGS module-private; re-exported here so the guard can
 // introspect the live schemas the bridge actually validates with.
 import { TOOL_ARGS } from "../src/server.js";
@@ -31,9 +32,17 @@ import { generateArtifactText } from "./contract/generate.mjs";
 
 interface ArtifactTool {
   name: string;
+  category: string;
   description: string;
   inputSchema: Record<string, unknown>;
 }
+
+/**
+ * Names the bridge answers itself. They are allowed — they must be, or they
+ * could never be called — but they have no counterpart in the add-in artifact,
+ * so the phantom and parity checks below skip them.
+ */
+const BRIDGE_OWNED: ReadonlySet<string> = new Set([HEALTH_TOOL, CATEGORY_TOOL]);
 
 /** Properties zod emits for a leaf; everything else is rebuilt by hand. */
 type Emitted = { $schema?: string } & Record<string, unknown>;
@@ -71,6 +80,7 @@ function isStrict(schema: z.ZodType): boolean {
 function toJsonSchema(schema: z.ZodType): Record<string, unknown> {
   const core = unwrap(schema);
   const description: string | undefined = schema.description ?? core.description;
+  const examples = readExamples(schema, core);
 
   if (core instanceof z.ZodObject) {
     const properties: Record<string, Record<string, unknown>> = {};
@@ -83,15 +93,37 @@ function toJsonSchema(schema: z.ZodType): Record<string, unknown> {
     if (required.length > 0) out.required = required;
     if (isStrict(core)) out.additionalProperties = false;
     if (description !== undefined) out.description = description;
+    if (examples !== undefined) out.examples = examples;
     return out;
   }
 
-  if (core instanceof z.ZodNumber) return numberToJsonSchema(core, description);
+  if (core instanceof z.ZodNumber) return numberToJsonSchema(core, description, examples);
 
   const emitted = z.toJSONSchema(core) as Emitted;
   const { $schema, ...rest } = emitted;
   if (description !== undefined && rest.description === undefined) rest.description = description;
+  // z.toJSONSchema already spreads meta for leaves that carry it themselves, but
+  // .meta() applied OUTSIDE an .optional() wrapper is registered on the wrapper,
+  // which the unwrapped core does not see — force it back in.
+  if (examples !== undefined) rest.examples = examples;
   return rest;
+}
+
+/**
+ * Reads the examples a schema carries. zod 4.6.x publishes .meta() payloads
+ * through z.globalRegistry only — _zod.def.meta stays undefined — and registers
+ * them on whichever node .meta() was called on, which may be the
+ * ZodOptional/ZodNullable wrapper or the inner type depending on chain order.
+ * Both are consulted so examples survive either order.
+ */
+function readExamples(schema: z.ZodType, core: z.ZodType): unknown[] | undefined {
+  const outer = metaExamples(schema);
+  return outer !== undefined ? outer : metaExamples(core);
+}
+
+function metaExamples(schema: z.ZodType): unknown[] | undefined {
+  const meta = z.globalRegistry.get(schema) as { examples?: unknown[] } | undefined;
+  return meta?.examples;
 }
 
 /**
@@ -100,7 +132,11 @@ function toJsonSchema(schema: z.ZodType): Record<string, unknown> {
  * .integer(); the add-in declares no such bounds, so only bounds set explicitly
  * (via .min()/.max()) are reported, alongside the integer-ness itself.
  */
-function numberToJsonSchema(schema: z.ZodType, description: string | undefined): Record<string, unknown> {
+function numberToJsonSchema(
+  schema: z.ZodType,
+  description: string | undefined,
+  examples: unknown[] | undefined,
+): Record<string, unknown> {
   const out: Record<string, unknown> = { type: "number" };
   const checks = (schema as unknown as { _zod: { def: { checks?: Array<CheckLike> } } })._zod.def.checks ?? [];
   for (const check of checks) {
@@ -114,6 +150,7 @@ function numberToJsonSchema(schema: z.ZodType, description: string | undefined):
     }
   }
   if (description !== undefined) out.description = description;
+  if (examples !== undefined) out.examples = examples;
   return out;
 }
 
@@ -143,17 +180,19 @@ function assertSurfaceInSync(): void {
   const byName = new Map(tools.map((tool) => [tool.name, tool]));
   const violations: string[] = [];
 
-  const forwarded = [...ALLOWED].filter((name) => name !== HEALTH_TOOL);
+  const forwarded = [...ALLOWED].filter((name) => !BRIDGE_OWNED.has(name));
 
   // 1. No phantoms: every forwarded name is a tool the add-in really serves.
   for (const name of forwarded) {
     if (!byName.has(name)) violations.push(`ALLOWED lists '${name}', but the add-in does not serve it`);
   }
 
-  // The health probe is bridge-owned: allowed, and deliberately absent upstream.
-  if (!ALLOWED.has(HEALTH_TOOL)) violations.push(`bridge-owned ${HEALTH_TOOL} must stay in ALLOWED`);
-  if (byName.has(HEALTH_TOOL))
-    violations.push(`${HEALTH_TOOL} is bridge-owned; it must not appear in the add-in artifact`);
+  // Bridge-owned tools are allowed — they must be, or they could never be
+  // called — and are deliberately absent upstream.
+  for (const name of BRIDGE_OWNED) {
+    if (!ALLOWED.has(name)) violations.push(`bridge-owned ${name} must stay in ALLOWED`);
+    if (byName.has(name)) violations.push(`${name} is bridge-owned; it must not appear in the add-in artifact`);
+  }
 
   // 2. No orphans: every add-in tool is classified exactly once. The three
   //    buckets must be pairwise disjoint (no name may sit in two of them).
@@ -209,6 +248,32 @@ function assertSurfaceInSync(): void {
     }
   }
 
+  // 5. Categories: every live tool is classified exactly once, inside the closed
+  //    set the add-in declares, and the classification matches the artifact.
+  const classified = new Set<string>();
+  for (const [name, category] of Object.entries(CATEGORY_BY_TOOL)) {
+    if (!(TOOL_CATEGORIES as readonly string[]).includes(category)) {
+      violations.push(
+        `'${name}' is in category '${category}', which is outside the closed set ${TOOL_CATEGORIES.join("/")}`,
+      );
+    }
+    if (classified.has(name)) violations.push(`live tool '${name}' is classified more than once`);
+    classified.add(name);
+  }
+  for (const name of ALLOWED) {
+    if (!(name in CATEGORY_BY_TOOL)) violations.push(`live tool '${name}' has no category`);
+  }
+  for (const name of [...PENDING, ...BLOCKED_HARD]) {
+    if (name in CATEGORY_BY_TOOL) violations.push(`'${name}' is classified as live, but it must never be surfaced`);
+  }
+  for (const tool of tools) {
+    if (CATEGORY_BY_TOOL[tool.name] !== tool.category) {
+      violations.push(
+        `category drift on '${tool.name}': bridge='${CATEGORY_BY_TOOL[tool.name]}' add-in='${tool.category}'`,
+      );
+    }
+  }
+
   if (violations.length > 0) {
     throw new Error(`bridge/add-in surface is out of sync:\n${violations.map((v) => `  - ${v}`).join("\n")}`);
   }
@@ -237,7 +302,7 @@ function isEqual(a: unknown, b: unknown): boolean {
 }
 
 it("keeps the bridge in sync with the add-in contract artifact", () => {
-  expect(artifact.tools).toHaveLength(18);
+  expect(artifact.tools).toHaveLength(19);
   assertSurfaceInSync();
 });
 
@@ -250,8 +315,8 @@ it("keeps the committed contract artifact generated from the live add-in source"
 }, 30_000);
 
 it("reports the expected tool count through the live allowlist", () => {
-  // 18 add-in tools + the bridge-owned health probe.
-  expect([...ALLOWED]).toHaveLength(19);
+  // 19 add-in tools + the two bridge-owned helpers (health probe, category listing).
+  expect([...ALLOWED]).toHaveLength(21);
 });
 
 /* ── Mutation proof: the guard must fail when the surface drifts ─────────── */

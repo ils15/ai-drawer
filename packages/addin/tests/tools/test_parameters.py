@@ -18,8 +18,7 @@ def test_add_parameter_requires_name_and_expression(fusion, call, mcp):
 
 
 def test_add_parameter_requires_an_active_design(fusion_empty, call, mcp):
-    message = mcp.error(call("add_parameter", name="w", expression="1 mm"))
-    assert "no active Fusion design" in message
+    assert mcp.error_kind(call("add_parameter", name="w", expression="1 mm")) == "no_active_document"
 
 
 def test_add_parameter_rejects_duplicates(fusion, call, mcp):
@@ -33,8 +32,7 @@ def test_add_parameter_reports_a_bad_expression(fusion, monkeypatch, call, mcp):
         raise RuntimeError("bad expression")
 
     monkeypatch.setattr(fusion.user_parameters, "add", boom)
-    message = mcp.error(call("add_parameter", name="bad", expression="*"))
-    assert "refused to create parameter" in message
+    assert mcp.error_kind(call("add_parameter", name="bad", expression="*")) == "invalid_expression"
 
 
 def test_add_parameter_unit_labels_the_parameter(fusion, call, mcp):
@@ -60,7 +58,7 @@ def test_list_parameters_reports_user_and_model_kinds(fusion, call, mcp):
 
 
 def test_list_parameters_requires_an_active_design(fusion_empty, call, mcp):
-    assert "no active Fusion design" in mcp.error(call("list_parameters"))
+    assert mcp.error_kind(call("list_parameters")) == "no_active_document"
 
 
 def test_modify_parameter_updates_expression_and_recomputes(fusion, call, mcp):
@@ -73,14 +71,13 @@ def test_modify_parameter_updates_expression_and_recomputes(fusion, call, mcp):
 
 
 def test_modify_parameter_unknown_name(fusion, call, mcp):
-    message = mcp.error(call("modify_parameter", name="depth", expression="1 mm"))
-    assert "no parameter named" in message
+    assert mcp.error_kind(call("modify_parameter", name="depth", expression="1 mm")) == "parameter_not_found"
 
 
 def test_modify_parameter_requires_an_active_design(fusion_empty, call, mcp):
-    assert "no active Fusion design" in mcp.error(
+    assert mcp.error_kind(
         call("modify_parameter", name="w", expression="1 mm")
-    )
+    ) == "no_active_document"
 
 
 def test_modify_parameter_reports_rejected_expression(fusion, monkeypatch, call, mcp):

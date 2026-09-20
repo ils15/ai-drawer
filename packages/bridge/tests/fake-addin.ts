@@ -25,8 +25,26 @@ export interface FakeAddinOptions {
   requireBothAccepts?: boolean;
   /** Reject every request with this HTTP status instead of answering. */
   forceStatus?: number;
+  /**
+   * Reject only tools/call with this HTTP status, answering ping and
+   * initialize normally. This is the shape that reaches the forbidden tier: a
+   * probe that is refused too collapses to unreachable in the state machine.
+   */
+  forceToolCallStatus?: number;
   /** Fail tool calls with a JSON-RPC error object (tier b path). */
   failToolCalls?: boolean;
+  /**
+   * Answer tools/call with a structured error envelope of the add-in's own,
+   * exactly as fusion_bridge/errors.py emits it. Exercises the passthrough: the
+   * bridge must surface it unchanged rather than re-wrapping it.
+   */
+  structuredToolError?: { error_kind: string; message: string; hint: string };
+  /**
+   * Answer tools/call with the add-in's dispatch catch-all: `message` is
+   * `str(exc)` and `data` carries a full traceback (lib/mcp_server.py). The
+   * bridge must let neither through.
+   */
+  leakyToolError?: { code: number; message: string; data: string };
   /** Bind this port instead of an ephemeral one; needed for restart tests. */
   port?: number;
 }
@@ -129,6 +147,12 @@ export class FakeAddin {
     }
 
     const payload = JSON.parse(body) as { id: number; method: string; params?: unknown };
+    if (this.options.forceToolCallStatus !== undefined && payload.method === "tools/call") {
+      response.writeHead(this.options.forceToolCallStatus, { "content-type": "application/json" });
+      response.end(JSON.stringify({ jsonrpc: "2.0", error: { code: -32000, message: "forced" } }));
+      return;
+    }
+
     const reply = this.answer(payload);
     this.writeReply(response, reply);
   }
@@ -159,6 +183,28 @@ export class FakeAddin {
             jsonrpc: "2.0",
             id: payload.id,
             error: { code: -32603, message: `tool '${name}' exploded` },
+          };
+        }
+        if (this.options.leakyToolError !== undefined) {
+          return {
+            jsonrpc: "2.0",
+            id: payload.id,
+            error: {
+              code: this.options.leakyToolError.code,
+              message: this.options.leakyToolError.message,
+              data: this.options.leakyToolError.data,
+            },
+          };
+        }
+        if (this.options.structuredToolError !== undefined) {
+          // The add-in's own envelope, framed exactly like structured_error.
+          return {
+            jsonrpc: "2.0",
+            id: payload.id,
+            result: {
+              content: [{ type: "text", text: JSON.stringify(this.options.structuredToolError, null, 2) }],
+              isError: true,
+            },
           };
         }
         return {

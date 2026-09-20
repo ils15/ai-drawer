@@ -6,6 +6,7 @@ from . import values
 from .application import FakeApplication
 from .design import FakeDesign
 from .documents import FakeDocuments
+from .failures import FailureInjector
 
 
 class FakeFusion:
@@ -15,11 +16,27 @@ class FakeFusion:
         # Shared custom-event registry, mirroring the test bootstrap's
         # _MOCK_APP_EVENTS so dispatch.py's firing keeps working.
         self.events: dict = {}
-        self.documents = FakeDocuments(self._create_design)
+        # One-shot failure injection (see .failures).  Opt-in per test: a kind
+        # only fires after fail_next() queues it, and only once.
+        self.failures = FailureInjector()
+        self.documents = FakeDocuments(self._create_design, self.failures)
         self.app = FakeApplication(self.documents, self.events)
 
     def _create_design(self):
-        return FakeDesign(), values.DocumentTypes.FusionDesignDocumentType
+        return (
+            FakeDesign(failures=self.failures),
+            values.DocumentTypes.FusionDesignDocumentType,
+        )
+
+    # -- failure injection --------------------------------------------------
+
+    def fail_next(self, kind):
+        """Queue a simulated Fusion failure for the next matching call.
+
+        See ``fake_fusion.failures`` for the kind list.  The injection fires
+        once and clears itself, so a test asserts exactly one error branch.
+        """
+        self.failures.fail_next(kind)
 
     # -- active state -----------------------------------------------------
 

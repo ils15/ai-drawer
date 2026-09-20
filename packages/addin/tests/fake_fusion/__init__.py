@@ -14,10 +14,13 @@ for it.
 
 from .bootstrap import install, installed, is_installed, uninstall
 from .factory import FakeFusion, make_fusion
+from .failures import INJECTABLE_KINDS, FailureInjector
 from .surface import PINNED_SURFACE, iter_pins, live_doc_url
 
 __all__ = [
+    "INJECTABLE_KINDS",
     "FakeFusion",
+    "FailureInjector",
     "PINNED_SURFACE",
     "install",
     "installed",

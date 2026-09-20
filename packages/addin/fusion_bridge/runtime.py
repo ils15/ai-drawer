@@ -3,13 +3,12 @@
 import platform
 import threading
 import time
-import traceback
 
 import adsk.core
 
 from .. import settings
 from ..lib import mcp_server as mcp_server_module
-from . import doc_lookup, tool_surface, version_info
+from . import diagnostics, doc_lookup, tool_surface, version_info
 from .dispatch import (
     dispatch_to_main_thread,
     drain_logs,
@@ -22,6 +21,7 @@ from .dispatch import (
     stop_main_thread_dispatch,
     wait_for_main_thread,
 )
+from .errors import structured_error
 
 _server = None
 _server_lock = threading.Lock()
@@ -38,10 +38,11 @@ def handle_any_tool(call_data):
         return {"content": [{"type": "text", "text": "ready"}]}
     handler = operations.TOOL_HANDLERS.get(tool_name)
     if handler is None:
-        return {
-            "content": [{"type": "text", "text": f"Unknown tool: {tool_name}"}],
-            "isError": True,
-        }
+        return structured_error(
+            "not_found",
+            f"Unknown tool: {tool_name}",
+            hint="Call tools/list to see the tools this server provides",
+        )
 
     start = time.perf_counter()
     result = None
@@ -54,7 +55,37 @@ def handle_any_tool(call_data):
             isinstance(result, dict) and result.get("isError")
         )
         status = "failed" if is_error else "completed"
+        diagnostics.record_call()
+        if is_error:
+            diagnostics.record_error(_error_kind(result))
         log(f"[MCP] {tool_name} {status} in {format_duration(elapsed_ms)}")
+
+
+def _error_kind(result):
+    """Extract the structured ``error_kind`` from a tool result, if any.
+
+    Responses that are not structured errors (for instance a queued-request
+    cancellation message) return ``None``; they are still counted as errors,
+    just not attributed to a taxonomy kind.
+    """
+    if not isinstance(result, dict):
+        return None
+    content = result.get("content")
+    if not isinstance(content, list) or not content:
+        return None
+    text = content[0].get("text") if isinstance(content[0], dict) else None
+    if not isinstance(text, str):
+        return None
+    try:
+        import json
+
+        payload = json.loads(text)
+    except ValueError:
+        return None
+    if isinstance(payload, dict):
+        kind = payload.get("error_kind")
+        return kind if isinstance(kind, str) else None
+    return None
 
 
 def create_server():
@@ -161,7 +192,6 @@ def _server_start_worker(shutdown_flag=None):
                 f"ERROR: Failed to start MCP server: {exc}",
                 adsk.core.LogLevels.ErrorLogLevel,
             )
-            log(traceback.format_exc(), adsk.core.LogLevels.ErrorLogLevel)
             request_main_thread_shutdown()
 
 
@@ -178,7 +208,6 @@ def start():
             f"ERROR: Failed to initialize main-thread dispatch: {exc}",
             adsk.core.LogLevels.ErrorLogLevel,
         )
-        log(traceback.format_exc(), adsk.core.LogLevels.ErrorLogLevel)
         return False
 
     if settings.MCP_AUTO_CONNECT:
@@ -196,7 +225,6 @@ def start():
                 f"ERROR: Failed to start MCP server: {exc}",
                 adsk.core.LogLevels.ErrorLogLevel,
             )
-            log(traceback.format_exc(), adsk.core.LogLevels.ErrorLogLevel)
             stop_main_thread_dispatch()
             return False
     else:

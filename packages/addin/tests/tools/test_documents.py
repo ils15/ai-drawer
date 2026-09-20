@@ -72,8 +72,7 @@ def test_export_document_requires_an_active_design(fusion_empty, call, mcp):
 
 
 def test_export_document_rejects_unsupported_format(fusion, call, mcp):
-    message = mcp.error(call("export_document", format="ply", path="/tmp/x.ply"))
-    assert "unsupported export format" in message
+    assert mcp.error_kind(call("export_document", format="ply", path="/tmp/x.ply")) == "invalid_value"
 
 
 def test_export_document_writes_a_real_file(fusion, tmp_path, call, mcp):
@@ -112,8 +111,7 @@ def test_export_document_reports_missing_pdf_capability(fusion, tmp_path, call, 
 
 
 def test_close_document_requires_an_active_document(fusion_empty, call, mcp):
-    message = mcp.error(call("close_document"))
-    assert "no active document to close" in message
+    assert mcp.error_kind(call("close_document")) == "no_active_document"
 
 
 def test_close_document_discards_unsaved_by_default(fusion, call, mcp):
@@ -131,8 +129,7 @@ def test_close_document_named_other_document(fusion, tmp_path, call, mcp):
 
 
 def test_close_document_refuses_to_save_without_a_location(fusion, call, mcp):
-    message = mcp.error(call("close_document", save=True))
-    assert "cannot save an unsaved document while closing" in message
+    assert mcp.error_kind(call("close_document", save=True)) == "unsupported_operation"
 
 
 def test_close_document_saves_first_when_asked(fusion, tmp_path, call, mcp):
@@ -154,7 +151,7 @@ def test_get_document_info_reports_saved_state(fusion, tmp_path, call, mcp):
 
 
 def test_get_document_info_without_a_document(fusion_empty, call, mcp):
-    assert "no active document" in mcp.error(call("get_document_info"))
+    assert mcp.error_kind(call("get_document_info")) == "no_active_document"
 
 
 def test_export_document_reports_execute_failure_without_silent_success(

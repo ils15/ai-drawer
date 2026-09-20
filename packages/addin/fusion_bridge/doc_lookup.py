@@ -6,24 +6,14 @@ provider instance.
 """
 
 import inspect
-import json
 import os
 import re
-import traceback
 import urllib.error
 import urllib.request
 from types import FunctionType, ModuleType
 
-# ── Response helpers ──────────────────────────────────────────────────────
-
-
-def _ok(message):
-    return {"content": [{"type": "text", "text": message}], "isError": False}
-
-
-def _err(message):
-    return {"content": [{"type": "text", "text": message}], "isError": True}
-
+from .errors import internal_error, structured_error
+from .value_builders import success_result
 
 # ── Introspection utilities ──────────────────────────────────────────────
 
@@ -164,9 +154,10 @@ class DocumentationProvider:
             header = (
                 f"Fusion Design Guide\n\nLength: {len(text.splitlines())} lines\n\n"
             )
-            return _ok(header + text)
+            return success_result(header + text)
         except Exception as exc:
-            return _err(f"ERROR reading design guide: {exc}")
+            log_fn(f"[MCP] fetch_design_guide failed: {exc!r}")
+            return internal_error(exc, "fetch_design_guide")
 
     # -- introspection search (scored ranking) -----------------------------
 
@@ -177,7 +168,7 @@ class DocumentationProvider:
 
         log_fn(f"[MCP] Tool call: fetch_api_documentation - {term} ({category})")
         if not term:
-            return _err("Missing required parameter 'search_term'")
+            return structured_error("missing_argument", "Missing required parameter 'search_term'")
 
         try:
             import adsk
@@ -236,13 +227,13 @@ class DocumentationProvider:
             top = [_classify_hit(*hit) for _, hit in scored[:max_results]]
 
             if not top:
-                return _ok(f"No results found for '{term}' in category '{category}'")
-            return _ok(json.dumps(top, indent=2))
-
+                return success_result(
+                    f"No results found for '{term}' in category '{category}'"
+                )
+            return success_result(top)
         except Exception as exc:
-            return _err(
-                f"ERROR searching documentation: {exc}\n{traceback.format_exc()}"
-            )
+            log_fn(f"[MCP] fetch_api_documentation failed: {exc!r}")
+            return internal_error(exc, "fetch_api_documentation")
 
     # -- online HTML docs (single-pass extraction) -------------------------
 
@@ -258,7 +249,7 @@ class DocumentationProvider:
             log_fn(f"[MCP] Tool call: fetch_online_documentation - {class_name}")
 
         if not class_name:
-            return _err("ERROR: 'class_name' parameter required")
+            return structured_error("missing_argument", "Missing required parameter 'class_name'")
 
         fname = (
             f"{class_name}_{member_name}.htm" if member_name else f"{class_name}.htm"
@@ -271,11 +262,13 @@ class DocumentationProvider:
                 html = resp.read().decode("utf-8")
 
             result = self._extract_all_sections(html, url, class_name, member_name)
-            return _ok(json.dumps(result, indent=2))
-
+            return success_result(result)
         except urllib.error.HTTPError as exc:
             if exc.code != 404:
-                return _err(f"HTTP Error {exc.code}: {exc}")
+                return structured_error(
+                    "network_failure",
+                    f"HTTP Error {exc.code} fetching documentation for '{class_name}'",
+                )
             alternatives = []
             if not member_name:
                 alternatives.append(
@@ -283,20 +276,20 @@ class DocumentationProvider:
                     if class_name.endswith("s")
                     else f"{class_name}s.htm"
                 )
-            payload = {
-                "error": f"No documentation page at {url}",
-                "suggestion": "Try a different class/member spelling",
-                "alternatives_to_try": alternatives,
-                "fallback": "Use fetch_api_documentation for introspection results",
-            }
-            return {
-                "content": [{"type": "text", "text": json.dumps(payload, indent=2)}],
-                "isError": True,
-            }
-        except Exception as exc:
-            return _err(
-                f"ERROR fetching documentation: {exc}\n{traceback.format_exc()}"
+            hint = "Try a different class/member spelling, or use fetch_api_documentation for introspection"
+            if alternatives:
+                hint = f"{hint}; alternatives to try: {', '.join(alternatives)}"
+            return structured_error(
+                "not_found", f"No documentation page at {url}", hint=hint
             )
+        except urllib.error.URLError:
+            return structured_error(
+                "network_failure",
+                f"Could not reach the Autodesk documentation site for '{class_name}'",
+            )
+        except Exception as exc:
+            log_fn(f"[MCP] fetch_online_documentation failed: {exc!r}")
+            return internal_error(exc, "fetch_online_documentation")
 
     def _extract_all_sections(self, html, url, class_name, member_name):
         """Parse all relevant sections from the Autodesk help HTML in a

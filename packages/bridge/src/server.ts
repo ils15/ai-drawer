@@ -2,11 +2,13 @@
  * MCP server: the stdio face OpenCode talks to.
  *
  * Per-request pipeline, in strict order:
- *   1. Route bridge-owned tools (fusion_health) locally. Never forwarded.
+ *   1. Route bridge-owned tools (fusion_health, list_tool_categories) locally.
+ *      Never forwarded.
  *   2. Gate every call through the allowlist BEFORE inspecting arguments.
  *   3. Validate arguments with zod before anything crosses the wire.
  *   4. Forward to the add-in through the connection state machine.
- *   5. Map the upstream outcome onto exactly one of the three error tiers.
+ *   5. Map the upstream outcome onto a structured error envelope, or pass the
+ *      add-in's own result through unchanged.
  *
  * tools/list is proxied from the add-in and then filtered, so the LLM only
  * ever sees the curated surface even if the add-in advertises more.
@@ -23,14 +25,19 @@ import {
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { denyMessage, filterToolList, gateToolCall, HEALTH_TOOL } from "./allowlist.js";
+import { CATEGORY_TOOL, filterToolList, gateToolCall, HEALTH_TOOL } from "./allowlist.js";
+import { categoryTool, listToolCategories } from "./categories.js";
 import { resolveHost } from "./config.js";
 import type { HealthReport } from "./connection.js";
 import { ConnectionMonitor } from "./connection.js";
 import {
   bridgeBugFailure,
   forbiddenFailure,
+  gateFailure,
+  invalidArguments,
+  protocolFailure,
   type ToolResult,
+  timeoutFailure,
   toolFailure,
   toolJson,
   unreachableFailure,
@@ -81,11 +88,13 @@ const STL_DENSITY = ["low", "medium", "high"] as const;
 const STL_UNITS = ["mm", "cm", "in", "m"] as const;
 
 /** xyz point in centimeters; shared by the get_viewport/set_viewport camera. */
-const pointSchema = z.strictObject({
-  x: z.number().min(-1e12).max(1e12),
-  y: z.number().min(-1e12).max(1e12),
-  z: z.number().min(-1e12).max(1e12),
-});
+const pointSchema = z
+  .strictObject({
+    x: z.number().min(-1e12).max(1e12).describe("X component in centimeters."),
+    y: z.number().min(-1e12).max(1e12).describe("Y component in centimeters."),
+    z: z.number().min(-1e12).max(1e12).describe("Z component in centimeters."),
+  })
+  .describe("A 3D position or direction vector; x, y, and z are in centimeters.");
 
 export const TOOL_ARGS: Readonly<Record<string, z.ZodType>> = {
   capture_viewport: z
@@ -96,27 +105,44 @@ export const TOOL_ARGS: Readonly<Record<string, z.ZodType>> = {
         .min(0)
         .max(8192)
         .optional()
-        .describe("Rendered image width in pixels (default: 800; 0 uses viewport width)"),
+        .describe("Rendered image width in pixels (default: 800; 0 uses viewport width)")
+        .meta({ examples: [800, 1920] }),
       height: z
         .number()
         .int()
         .min(0)
         .max(8192)
         .optional()
-        .describe("Rendered image height in pixels (default: 600; 0 uses viewport height)"),
+        .describe("Rendered image height in pixels (default: 600; 0 uses viewport height)")
+        .meta({ examples: [600, 1080] }),
       view: z
         .enum(STANDARD_VIEWS)
         .optional()
-        .describe("Temporary ViewCube-relative standard view; omit to keep current view."),
+        .describe("Temporary ViewCube-relative standard view; omit to keep current view.")
+        .meta({ examples: ["isometric", "front"] }),
       fit: z.boolean().optional().describe("Temporarily fit all graphics before capture (default: false)."),
-      background: z.string().optional().describe("viewport (default), transparent, or a solid #RRGGBB color."),
+      background: z
+        .string()
+        .optional()
+        .describe("viewport (default), transparent, or a solid #RRGGBB color.")
+        .meta({ examples: ["viewport", "transparent", "#FFFFFF"] }),
       anti_aliasing: z.boolean().optional().describe("Smooth rendered edges (default: true)."),
       crop: z
         .strictObject({
-          x: z.number().int().min(0).max(8192),
-          y: z.number().int().min(0).max(8192),
-          width: z.number().int().min(1).max(8192),
-          height: z.number().int().min(1).max(8192),
+          x: z
+            .number()
+            .int()
+            .min(0)
+            .max(8192)
+            .describe("Left edge of the crop region, in pixels from the image's left side."),
+          y: z
+            .number()
+            .int()
+            .min(0)
+            .max(8192)
+            .describe("Top edge of the crop region, in pixels from the image's top side."),
+          width: z.number().int().min(1).max(8192).describe("Crop region width in pixels."),
+          height: z.number().int().min(1).max(8192).describe("Crop region height in pixels."),
         })
         .optional()
         .describe("Rectangle inside the rendered image; output dimensions equal crop width/height."),
@@ -141,11 +167,13 @@ export const TOOL_ARGS: Readonly<Record<string, z.ZodType>> = {
           eye: pointSchema,
           target: pointSchema,
           up_vector: pointSchema,
-          projection: z.enum(PROJECTIONS),
+          projection: z
+            .enum(PROJECTIONS)
+            .describe("Camera projection; orthographic uses extents, perspective uses perspective_angle."),
           extents: z
             .strictObject({
-              width: z.number().min(1e-9).max(1e12),
-              height: z.number().min(1e-9).max(1e12),
+              width: z.number().min(1e-9).max(1e12).describe("View volume width in centimeters."),
+              height: z.number().min(1e-9).max(1e12).describe("View volume height in centimeters."),
             })
             .optional()
             .describe("Required for orthographic cameras only, in cm."),
@@ -161,24 +189,66 @@ export const TOOL_ARGS: Readonly<Record<string, z.ZodType>> = {
           "Camera snapshot from get_viewport. Coordinates/extents in cm; " +
             "perspective_angle in degrees. Use alone to restore a camera.",
         ),
-      view: z.enum(STANDARD_VIEWS).optional(),
-      projection: z.enum(PROJECTIONS).optional(),
+      view: z
+        .enum(STANDARD_VIEWS)
+        .optional()
+        .describe("Standard ViewCube orientation to apply.")
+        .meta({ examples: ["front", "iso_top_right"] }),
+      projection: z
+        .enum(PROJECTIONS)
+        .optional()
+        .describe("Camera projection; orthographic uses extents, perspective uses perspective_angle."),
       fit: z.boolean().optional().describe("Fit all graphics (default: false)."),
       orbit: z
         .strictObject({
-          yaw: z.number().min(-360).max(360).optional(),
-          pitch: z.number().min(-360).max(360).optional(),
-          roll: z.number().min(-360).max(360).optional(),
+          yaw: z
+            .number()
+            .min(-360)
+            .max(360)
+            .optional()
+            .describe("Rotation about the camera's up vector, in degrees.")
+            .meta({ examples: [30] }),
+          pitch: z
+            .number()
+            .min(-360)
+            .max(360)
+            .optional()
+            .describe("Rotation about the camera's right vector, in degrees.")
+            .meta({ examples: [-15] }),
+          roll: z.number().min(-360).max(360).optional().describe("Rotation about the viewing direction, in degrees."),
         })
-        .optional(),
+        .optional()
+        .describe("Right-handed rotation angles in degrees about the camera axes."),
       pan: z
         .strictObject({
-          x: z.number().min(-1e9).max(1e9).optional(),
-          y: z.number().min(-1e9).max(1e9).optional(),
+          x: z
+            .number()
+            .min(-1e9)
+            .max(1e9)
+            .optional()
+            .describe("Displacement along screen right, in centimeters.")
+            .meta({ examples: [5] }),
+          y: z
+            .number()
+            .min(-1e9)
+            .max(1e9)
+            .optional()
+            .describe("Displacement along screen up, in centimeters.")
+            .meta({ examples: [2.5] }),
         })
-        .optional(),
-      zoom: z.number().min(0.01).max(100).optional(),
-      description: z.string().optional(),
+        .optional()
+        .describe("Camera translation along screen right and up, in centimeters."),
+      zoom: z
+        .number()
+        .min(0.01)
+        .max(100)
+        .optional()
+        .describe("Dimensionless zoom factor; a ratio where 1 is the current scale.")
+        .meta({ examples: [2] }),
+      description: z
+        .string()
+        .optional()
+        .describe("Optional caller note recorded with the view change; it is not rendered."),
     })
     .describe(
       "Control the active Fusion camera. Changes apply in order: projection/view, fit, orbit, pan, zoom. " +
@@ -197,9 +267,21 @@ export const TOOL_ARGS: Readonly<Record<string, z.ZodType>> = {
     ),
   fetch_api_documentation: z
     .object({
-      search_term: z.string().describe("Search term (e.g. 'BRepBody', 'sketches', 'adsk.fusion.Sketch.add')"),
-      category: z.string().optional().describe("Search category: class_name, member_name, description, or all"),
-      max_results: z.number().int().optional().describe("Maximum number of results (default: 3)"),
+      search_term: z
+        .string()
+        .describe("Search term (e.g. 'BRepBody', 'sketches', 'adsk.fusion.Sketch.add')")
+        .meta({ examples: ["BRepBody", "sketches"] }),
+      category: z
+        .string()
+        .optional()
+        .describe("Search category: class_name, member_name, description, or all")
+        .meta({ examples: ["class_name", "all"] }),
+      max_results: z
+        .number()
+        .int()
+        .optional()
+        .describe("Maximum number of results to return (default: 3)")
+        .meta({ examples: [5] }),
     })
     .describe(
       "Search live Fusion API metadata through runtime introspection. " +
@@ -208,8 +290,15 @@ export const TOOL_ARGS: Readonly<Record<string, z.ZodType>> = {
     ),
   fetch_online_documentation: z
     .object({
-      class_name: z.string().describe("API class name (e.g. 'BRepBody', 'Sketch')"),
-      member_name: z.string().optional().describe("Optional member name (e.g. 'add', 'name')"),
+      class_name: z
+        .string()
+        .describe("API class name (e.g. 'BRepBody', 'Sketch')")
+        .meta({ examples: ["BRepBody", "Sketch"] }),
+      member_name: z
+        .string()
+        .optional()
+        .describe("Optional member name (e.g. 'add', 'name')")
+        .meta({ examples: ["add"] }),
     })
     .describe("Fetch Autodesk cloudhelp documentation for a specific Fusion API class or member."),
   fetch_design_guide: z
@@ -237,11 +326,15 @@ export const TOOL_ARGS: Readonly<Record<string, z.ZodType>> = {
     ),
   new_document: z
     .strictObject({
-      name: z.string().describe("Name for the new document."),
+      name: z
+        .string()
+        .describe("Name for the new document.")
+        .meta({ examples: ["Bracket"] }),
       design_type: z
         .enum(DESIGN_TYPES)
         .optional()
-        .describe("Parametric (default) keeps a timeline; direct is history-free."),
+        .describe("Parametric (default) keeps a timeline; direct is history-free.")
+        .meta({ examples: ["parametric"] }),
     })
     .describe(
       "Create and activate a new Fusion design document with the given name. The optional " +
@@ -251,7 +344,10 @@ export const TOOL_ARGS: Readonly<Record<string, z.ZodType>> = {
     ),
   open_document: z
     .strictObject({
-      path: z.string().describe("Path of the file to open."),
+      path: z
+        .string()
+        .describe("Path of the file to open.")
+        .meta({ examples: ["/home/user/designs/bracket.f3d"] }),
     })
     .describe(
       "Open a previously saved Fusion file (.f3d, .f3z, .step, .iges, .smt, .sat, .dwg, ...) " +
@@ -260,7 +356,11 @@ export const TOOL_ARGS: Readonly<Record<string, z.ZodType>> = {
     ),
   save_document: z
     .strictObject({
-      path: z.string().optional().describe("Save-as target; omit to save the existing file in place."),
+      path: z
+        .string()
+        .optional()
+        .describe("Save-as target; omit to save the existing file in place.")
+        .meta({ examples: ["/home/user/designs/bracket-v2.f3d"] }),
     })
     .describe(
       "Save the active document. Omit path to save in place (fails with a clear error if the " +
@@ -270,13 +370,24 @@ export const TOOL_ARGS: Readonly<Record<string, z.ZodType>> = {
     ),
   export_document: z
     .strictObject({
-      format: z.enum(EXPORT_FORMATS).describe("Export format."),
-      path: z.string().describe("Output file path."),
-      stl_density: z.enum(STL_DENSITY).optional().describe("STL mesh refinement (default: medium)."),
+      format: z
+        .enum(EXPORT_FORMATS)
+        .describe("Export format.")
+        .meta({ examples: ["stl"] }),
+      path: z
+        .string()
+        .describe("Output file path.")
+        .meta({ examples: ["/home/user/exports/bracket.stl"] }),
+      stl_density: z
+        .enum(STL_DENSITY)
+        .optional()
+        .describe("STL mesh refinement (default: medium).")
+        .meta({ examples: ["high"] }),
       stl_units: z
         .enum(STL_UNITS)
         .optional()
-        .describe("Units the unitless STL numbers represent (default: design units)."),
+        .describe("Units the unitless STL numbers represent (default: design units).")
+        .meta({ examples: ["mm"] }),
     })
     .describe(
       "Export the active design to step, stl, f3d, iges, obj, or pdf, writing to the given path " +
@@ -288,7 +399,11 @@ export const TOOL_ARGS: Readonly<Record<string, z.ZodType>> = {
     ),
   close_document: z
     .strictObject({
-      document_name: z.string().optional().describe("Document to close; omit for the active one."),
+      document_name: z
+        .string()
+        .optional()
+        .describe("Document to close; omit for the active one.")
+        .meta({ examples: ["bracket"] }),
       save: z.boolean().optional().describe("Save in place before closing (default: false)."),
     })
     .describe(
@@ -315,9 +430,19 @@ export const TOOL_ARGS: Readonly<Record<string, z.ZodType>> = {
     ),
   add_parameter: z
     .strictObject({
-      name: z.string().describe("Parameter name; must be unique."),
-      expression: z.string().describe('Fusion expression, e.g. "3 mm" or "width/2".'),
-      unit: z.string().optional().describe("Parameter unit label (default: mm)."),
+      name: z
+        .string()
+        .describe("Parameter name; must be unique.")
+        .meta({ examples: ["width"] }),
+      expression: z
+        .string()
+        .describe('Fusion expression, e.g. "3 mm" or "width/2".')
+        .meta({ examples: ["3 mm", "width / 2"] }),
+      unit: z
+        .string()
+        .optional()
+        .describe("Parameter unit label (default: mm).")
+        .meta({ examples: ["mm", "deg"] }),
     })
     .describe(
       "Add a user parameter to the active design. The expression is a Fusion expression string " +
@@ -327,8 +452,14 @@ export const TOOL_ARGS: Readonly<Record<string, z.ZodType>> = {
     ),
   modify_parameter: z
     .strictObject({
-      name: z.string().describe("Existing parameter name."),
-      expression: z.string().describe('New Fusion expression, e.g. "40 mm" or "height * 2".'),
+      name: z
+        .string()
+        .describe("Existing parameter name.")
+        .meta({ examples: ["width"] }),
+      expression: z
+        .string()
+        .describe('New Fusion expression, e.g. "40 mm" or "height * 2".')
+        .meta({ examples: ["40 mm", "height * 2"] }),
     })
     .describe(
       "Change an existing parameter's expression and recompute the model in one pass — the " +
@@ -336,6 +467,18 @@ export const TOOL_ARGS: Readonly<Record<string, z.ZodType>> = {
         "ran, and recomputed_feature_count (features that re-evaluated; null when the running " +
         "Fusion cannot report it). Use this to drive dimensions instead of recreating geometry.",
     ),
+  fusion_diagnostics: z
+    .object({})
+    .strict()
+    .describe(
+      "Readiness flags and cumulative reliability counters for this add-in: whether the " +
+        "dispatch loop and an MCP server are up, whether a document is open, the live tool " +
+        "inventory, total tool calls, total tool failures, and per-kind error counts. Safe to " +
+        "call at any time, including before any other tool; values are counts and names only, " +
+        "never messages or paths. Use this to decide whether a missed call was this add-in or " +
+        "the client.",
+    ),
+  list_tool_categories: z.object({}).describe("List the available tools grouped by category; takes no arguments."),
 };
 
 export interface BridgeServer {
@@ -384,9 +527,9 @@ export async function runStdio(): Promise<BridgeServer> {
 
 /**
  * tools/list: proxy the add-in's list, then filter it through the allowlist.
- * When the add-in is unreachable the bridge still reports its own
- * fusion_health tool, so the LLM can diagnose the outage instead of seeing
- * an empty list with no explanation.
+ * When the add-in is unreachable the bridge still reports its own bridge-owned
+ * tools (fusion_health, list_tool_categories), so the LLM can diagnose the
+ * outage and discover the surface instead of an empty list with no explanation.
  */
 async function handleListTools(monitor: ConnectionMonitor): Promise<{ tools: Tool[] }> {
   const { host, port } = monitor.endpoint;
@@ -397,18 +540,18 @@ async function handleListTools(monitor: ConnectionMonitor): Promise<{ tools: Too
     LIST_TIMEOUT_MS,
   );
 
-  if (!result.ok) return { tools: [healthTool()] };
+  if (!result.ok) return { tools: bridgeOwnedTools() };
 
   const success = asJsonRpcSuccess(result.message);
   if (success === null) {
     // A method-not-found error means the add-in predates tools/list: nothing
-    // to proxy. Anything else is a protocol problem; report health only.
+    // to proxy. Anything else is a protocol problem; report bridge-owned only.
     const error = asJsonRpcError(result.message);
-    return { tools: error !== null && error.error.code === -32601 ? [] : [healthTool()] };
+    return { tools: error !== null && error.error.code === -32601 ? [] : bridgeOwnedTools() };
   }
 
   const parsed = ListToolsResultSchema.safeParse(success.result);
-  if (!parsed.success) return { tools: [healthTool()] };
+  if (!parsed.success) return { tools: bridgeOwnedTools() };
 
   const advertised: readonly Tool[] = parsed.data.tools;
   const byName = new Map<string, Tool>(advertised.map((tool) => [tool.name, tool]));
@@ -418,9 +561,18 @@ async function handleListTools(monitor: ConnectionMonitor): Promise<{ tools: Too
     const tool = byName.get(name);
     if (tool !== undefined) tools.push(tool);
   }
-  if (!tools.some((tool) => tool.name === HEALTH_TOOL)) tools.push(healthTool());
+  // Bridge-owned tools have no upstream counterpart, so they are appended here
+  // rather than filtered in: they stay advertised when the add-in is down.
+  for (const bridgeTool of bridgeOwnedTools()) {
+    if (!tools.some((tool) => tool.name === bridgeTool.name)) tools.push(bridgeTool);
+  }
 
   return { tools };
+}
+
+/** The bridge-owned entries: answered locally, never proxied from upstream. */
+function bridgeOwnedTools(): Tool[] {
+  return [healthTool(), categoryTool()];
 }
 
 /** fusion_health is bridge-owned: answered locally, never forwarded. */
@@ -438,7 +590,8 @@ async function handleCallTool(request: CallToolRequest, monitor: ConnectionMonit
   const name: string = request.params.name;
   const args: unknown = request.params.arguments;
 
-  // 1. Bridge-owned tool, answered locally and never forwarded.
+  // 1. Bridge-owned tools, answered locally and never forwarded.
+  if (name === CATEGORY_TOOL) return toolJson(listToolCategories());
   if (name === HEALTH_TOOL) {
     const report: HealthReport = await monitor.health();
     return toolJson(report);
@@ -447,7 +600,7 @@ async function handleCallTool(request: CallToolRequest, monitor: ConnectionMonit
   // 2. Security gate, before any argument is inspected.
   const gate = gateToolCall(name);
   if (!gate.allowed) {
-    return toolFailure(`Tool '${name}' is not available.`, denyMessage(name, gate.reason ?? "not-allowed"));
+    return gateFailure(name, gate.reason ?? "not-allowed");
   }
 
   // 3. Validate arguments with zod before they cross the wire.
@@ -455,10 +608,7 @@ async function handleCallTool(request: CallToolRequest, monitor: ConnectionMonit
   if (schema !== undefined && args !== undefined) {
     const validated = schema.safeParse(args);
     if (!validated.success) {
-      return toolFailure(
-        `Invalid arguments for '${name}'.`,
-        validated.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("\n"),
-      );
+      return invalidArguments(name, validated.error.issues);
     }
   }
 
@@ -470,23 +620,29 @@ async function handleCallTool(request: CallToolRequest, monitor: ConnectionMonit
   return mapFailure(outcome.kind, outcome.detail, name, monitor);
 }
 
-/** Converts an upstream reply into a tools/call result, honoring error tiers. */
+/**
+ * Converts an upstream reply into a tools/call result, honoring error tiers.
+ *
+ * A well-formed result is passed through UNCHANGED: the add-in owns the success
+ * shape and its own structured error envelopes (`error_kind`/`message`/`hint`),
+ * which must reach the LLM exactly as the add-in wrote them.
+ */
 function mapToolResult(message: unknown, name: string): ToolResult {
   const error = asJsonRpcError(message);
   if (error !== null) {
-    // Tier (b): the add-in executed the tool and the tool failed.
-    return toolFailure(`Tool '${name}' failed (code ${error.error.code}).`, error.error.message);
+    // Tier (b): the add-in answered, but its dispatch layer caught a failure.
+    // The upstream `message` is built from `str(exc)` and `data` carries a full
+    // traceback (lib/mcp_server.py), so neither is echoed: the LLM gets the
+    // code plus an actionable hint, and the cause stays in the add-in log.
+    return toolFailure("tool_failed", `Tool '${name}' failed (code ${error.error.code}).`);
   }
 
   const success = asJsonRpcSuccess(message);
-  if (success === null) return toolFailure(`Tool '${name}' returned an unreadable reply.`);
+  if (success === null) return protocolFailure(name);
 
   const parsed = CallToolResultSchema.safeParse(success.result);
   if (!parsed.success) {
-    return toolFailure(
-      `Tool '${name}' returned a malformed result.`,
-      "reply did not match the MCP CallToolResult schema",
-    );
+    return protocolFailure(name, "reply did not match the MCP CallToolResult schema");
   }
 
   return parsed.data;
@@ -501,14 +657,14 @@ function mapFailure(kind: UpstreamFailureKind, detail: string, name: string, mon
       // Tier (c): actionable text naming the exact endpoint attempted.
       return unreachableFailure(host, port, detail);
     case "timeout":
-      return unreachableFailure(host, port, `Timed out after ${CALL_TIMEOUT_MS}ms. ${detail}`);
+      return timeoutFailure(host, port, CALL_TIMEOUT_MS, detail);
     case "forbidden":
       // Reachable but refused: an origin/identity problem, not an outage.
       return forbiddenFailure(host, port, detail);
     case "bridge-bug":
-      return bridgeBugFailure(406);
+      return bridgeBugFailure(detail);
     default:
-      return toolFailure(`Tool '${name}' failed with a protocol error.`, detail);
+      return protocolFailure(name, detail);
   }
 }
 

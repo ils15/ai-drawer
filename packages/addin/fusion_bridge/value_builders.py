@@ -247,11 +247,6 @@ def success_result(payload):
     return {"content": [{"type": "text", "text": json.dumps(payload, indent=2)}], "isError": False}
 
 
-def error_result(message):
-    """Wrap an explanatory message in an MCP tool error response."""
-    return {"content": [{"type": "text", "text": str(message)}], "isError": True}
-
-
 # ── Units convention ──────────────────────────────────────────────────────
 # Geometry/length values exchanged with the tools are plain numbers in
 # centimeters unless the caller passes ``units``.  Bare numbers are rescaled

@@ -19,6 +19,12 @@
 export const HEALTH_TOOL = "fusion_health" as const;
 
 /**
+ * Bridge-owned category listing; answered locally, never forwarded upstream.
+ * The classification itself lives in categories.ts.
+ */
+export const CATEGORY_TOOL = "list_tool_categories" as const;
+
+/**
  * The live curated surface: every tool the add-in serves today (Wave-1
  * viewport/selection/documentation plus the Wave-2 lifecycle, document and
  * parameter tools), together with the bridge-owned health probe.
@@ -50,8 +56,11 @@ export const ALLOWED: ReadonlySet<string> = new Set<string>([
   "new_document",
   "open_document",
   "save_document",
+  // Wave-2 diagnostics.
+  "fusion_diagnostics",
   // Bridge-owned; never forwarded to the add-in.
   HEALTH_TOOL,
+  CATEGORY_TOOL,
 ]);
 
 /**

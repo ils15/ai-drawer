@@ -463,7 +463,7 @@ class OwnedSchemaTests(unittest.TestCase):
     def test_all_owned_schema_keywords_are_supported(self):
         supported = {
             "type", "description", "properties", "required", "items", "enum",
-            "minimum", "maximum", "additionalProperties",
+            "minimum", "maximum", "additionalProperties", "examples",
         }
         def visit(schema):
             self.assertLessEqual(schema.keys(), supported)

@@ -6,6 +6,7 @@ import os
 from collections.abc import Callable
 
 from . import values
+from .failures import FailureInjector
 
 
 class FakeDataFile:
@@ -61,9 +62,12 @@ class FakeDocument:
 class FakeDocuments:
     """``app.documents``: add/open by path, look up by index or name."""
 
-    def __init__(self, create_design):
+    def __init__(self, create_design, failures=None):
         # create_design() -> (product, doc_type) for a brand-new design.
         self._create_design = create_design
+        # Failure injection (see .failures); a standalone collection gets its
+        # own injector, which simply never has anything queued.
+        self._failures = failures if failures is not None else FailureInjector()
         self._items: list[FakeDocument] = []
         # Real Fusion activates a document as soon as it is created or opened;
         # the Application registers its hook so the tools see that happen.
@@ -99,6 +103,11 @@ class FakeDocuments:
         return self._activate_document(document)
 
     def open(self, path):
+        # Simulated Fusion refusal, queued by fail_next("open_returns_none").
+        # Fires before the path check so a test can inject it even with a
+        # valid on-disk file (the fake otherwise cannot fail that way).
+        if self._failures.fire("open_returns_none"):
+            return None
         # Real Fusion refuses a path it cannot read; the fake mirrors that so
         # open_document's "could not open" branch is reachable in tests.
         if not path or not os.path.isfile(path):
