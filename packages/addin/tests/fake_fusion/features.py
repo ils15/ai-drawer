@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import math
 
-from .values import Point3D
+from .values import FeatureHealthStates, Point3D, SurfaceTypes, Vector3D
 
 
 class FakeMaterial:
@@ -142,21 +142,97 @@ class FakeBoundingBox3D:
         self.maxPoint = max_point
 
 
+class FakeSurface:
+    """``face.geometry``: the surface kind a face lies on.
+
+    Only the surface kind is real here -- the inspection tool reads
+    ``surfaceType`` and maps all eight published members, so a planar face
+    reports ``plane`` and a curved one reports its true kind rather than a
+    placeholder.
+    """
+
+    def __init__(self, surface_type):
+        self.surfaceType = surface_type
+
+    @staticmethod
+    def planar():
+        return FakeSurface(SurfaceTypes.PlaneSurfaceType)
+
+    @staticmethod
+    def nurbs():
+        return FakeSurface(SurfaceTypes.NurbsSurfaceType)
+
+    @property
+    def objectType(self):
+        return "adsk.fusion.Surface"
+
+
 class FakeBRepEdge:
     """A linear edge the fillet and chamfer tools address.
 
     ``length`` is in centimetres and is what the fake compares a fillet radius
-    against when deciding whether the feature is buildable at all.
+    against when deciding whether the feature is buildable at all.  The endpoints
+    are real geometry: an edge spans two points, so its length, bounding box, and
+    direction are all derived from them and a measurement between two edges is a
+    genuine angle between two directions.
     """
 
-    def __init__(self, name, length, entity_token=None):
+    def __init__(self, name, length, entity_token=None, start=None, end=None):
         self.name = name
-        self.length = length
         self.entityToken = entity_token or f"edge:{name}"
+        if start is None or end is None:
+            # An unspecified edge lies along +x from the origin, so its span
+            # matches the length it was built with.
+            start = Point3D.create()
+            end = Point3D.create(float(length), 0.0, 0.0)
+        self.start = start
+        self.end = end
+        self.length = math.dist(start.as_tuple(), end.as_tuple())
+
+    @property
+    def geometry(self):
+        return FakeLine3D(self.start, self.end)
+
+    @property
+    def boundingBox(self):
+        return _span_box(self.start, self.end)
+
+    @property
+    def preciseBoundingBox(self):
+        # A linear edge's tight box is exact: it spans its two endpoints.
+        return self.boundingBox
 
     @property
     def objectType(self):
         return "adsk.fusion.BRepEdge"
+
+
+class FakeLine3D:
+    """The linear geometry a BRepEdge reports through ``geometry``."""
+
+    def __init__(self, start, end):
+        self.start = start
+        self.end = end
+
+    @property
+    def objectType(self):
+        return "adsk.core.Line3D"
+
+
+def _span_box(point_one, point_two):
+    """The axis-aligned box two points span."""
+    return FakeBoundingBox3D(
+        Point3D.create(
+            min(point_one.x, point_two.x),
+            min(point_one.y, point_two.y),
+            min(point_one.z, point_two.z),
+        ),
+        Point3D.create(
+            max(point_one.x, point_two.x),
+            max(point_one.y, point_two.y),
+            max(point_one.z, point_two.z),
+        ),
+    )
 
 
 class FakeBRepFace:
@@ -164,7 +240,9 @@ class FakeBRepFace:
 
     ``isPlanar`` is what the hole tool's face requirement comes down to: a
     simple hole needs a plane to position and extrude from, so a non-planar
-    face is rejected the way real Fusion rejects it.
+    face is rejected the way real Fusion rejects it.  The inspection tools read
+    ``geometry.surfaceType`` for the surface kind, so a curved face reports
+    ``nurbs`` rather than pretending to be planar.
     """
 
     def __init__(self, name, area=1.0, centroid=None, entity_token=None, is_planar=True):
@@ -173,6 +251,26 @@ class FakeBRepFace:
         self.centroid = centroid if centroid is not None else Point3D.create()
         self.entityToken = entity_token or f"face:{name}"
         self.isPlanar = is_planar
+
+    @property
+    def geometry(self):
+        return FakeSurface.planar() if self.isPlanar else FakeSurface.nurbs()
+
+    @property
+    def boundingBox(self):
+        # A face's extent is derived from its area: a square of that area,
+        # centred on the centroid.  Exact for a square face, a tight bound for
+        # any other shape of the same area.
+        half = math.sqrt(self.area) / 2.0
+        center = self.centroid
+        return _span_box(
+            Point3D.create(center.x - half, center.y - half, center.z - half),
+            Point3D.create(center.x + half, center.y + half, center.z + half),
+        )
+
+    @property
+    def preciseBoundingBox(self):
+        return self.boundingBox
 
     @property
     def objectType(self):
@@ -237,6 +335,25 @@ class FakeBRepBody:
         self.volume = (self._profile.area or 0.0) * abs(self._distance)
 
     @property
+    def area(self):
+        """Surface area in square centimetres, derived from the extent.
+
+        The box that bounds the swept profile gives 2(lw + lh + wh): exact for a
+        rectangular extrude, and a conservative bound for a curved one.
+        """
+        return _box_surface_area(self.boundingBox)
+
+    @property
+    def preciseBoundingBox(self):
+        # A swept profile's tight box is the footprint extruded by the distance,
+        # which is exactly what _recompute stores as the rough box.
+        return self.boundingBox
+
+    @property
+    def entityToken(self):
+        return f"body:{self.name}"
+
+    @property
     def objectType(self):
         return "adsk.fusion.BRepBody"
 
@@ -265,6 +382,184 @@ class FakeBRepBodies:
 
     def __iter__(self):
         return iter(self._items)
+
+
+def _box_surface_area(box):
+    """The surface area of an axis-aligned box, in square centimetres."""
+    length = box.maxPoint.x - box.minPoint.x
+    width = box.maxPoint.y - box.minPoint.y
+    height = box.maxPoint.z - box.minPoint.z
+    return 2.0 * (length * width + length * height + width * height)
+
+
+class FakeTimelineObject:
+    """A timeline node that is not a feature.
+
+    The timeline holds sketches, construction geometry, canvas and decal
+    inserts, joints, and PMI alongside the features a model is built from, so
+    this is what those nodes look like when the inspection tool walks the
+    collection: the same name / index / health members, no feature body.
+    """
+
+    def __init__(self, name, kind, health=None, message="", is_suppressed=False):
+        self.name = name
+        self.kind = kind
+        self.timelineIndex = -1
+        self.isSuppressed = is_suppressed
+        self.healthState = health if health is not None else FeatureHealthStates.HealthyFeatureHealthState
+        self.errorOrWarningMessage = message
+
+    @property
+    def index(self):
+        return self.timelineIndex
+
+    @property
+    def entity(self):
+        # The object this node represents; the fake does not model a separate
+        # sketch or joint behind the node, so the node is its own entity.
+        return self
+
+    @property
+    def objectType(self):
+        return f"adsk.fusion.{self.kind}"
+
+
+# ── Measurement ──────────────────────────────────────────────────────────────
+
+
+class FakeMeasureResults:
+    """``MeasureManager`` output: a value and the points it spans.
+
+    ``value`` is centimetres for a distance and radians for an angle, mirroring
+    the real API, which reports angle in radians and leaves the conversion to
+    the caller.
+    """
+
+    def __init__(self, value, position_one=None, position_two=None, position_three=None, is_valid=True):
+        self.value = value
+        self.positionOne = position_one
+        self.positionTwo = position_two
+        self.positionThree = position_three
+        self.isValid = is_valid
+
+
+def _entity_box(entity):
+    """The axis-aligned extent of an entity, or None when it carries none."""
+    box = getattr(entity, "preciseBoundingBox", None) or getattr(entity, "boundingBox", None)
+    if box is not None:
+        return box
+    position = _entity_position(entity)
+    if position is None:
+        return None
+    # A point is a degenerate box, so a distance to it is still exact.
+    return FakeBoundingBox3D(position, position)
+
+
+def _entity_position(entity):
+    """A representative point for an entity: its centroid or its own position."""
+    if isinstance(entity, Point3D):
+        return entity
+    box = getattr(entity, "preciseBoundingBox", None) or getattr(entity, "boundingBox", None)
+    if box is not None:
+        return Point3D.create(
+            (box.minPoint.x + box.maxPoint.x) / 2.0,
+            (box.minPoint.y + box.maxPoint.y) / 2.0,
+            (box.minPoint.z + box.maxPoint.z) / 2.0,
+        )
+    for attribute in ("centroid", "start", "geometry"):
+        found = getattr(entity, attribute, None)
+        if isinstance(found, Point3D):
+            return found
+    return None
+
+
+def _entity_direction(entity):
+    """A direction vector for an angle: an edge's span, a face normal, or a position."""
+    kind = getattr(entity, "objectType", None)
+    if kind == "adsk.fusion.BRepEdge":
+        start, end = entity.start, entity.end
+        return Vector3D.create(end.x - start.x, end.y - start.y, end.z - start.z)
+    if kind == "adsk.fusion.BRepFace":
+        # A planar face's normal is the only direction an angle can use; a
+        # curved face has no single normal, which is why the API rejects it.
+        if getattr(entity.geometry, "surfaceType", None) == SurfaceTypes.PlaneSurfaceType:
+            return Vector3D.create(0.0, 0.0, 1.0)
+        return None
+    position = _entity_position(entity)
+    if position is None:
+        return None
+    return Vector3D.create(position.x, position.y, position.z)
+
+
+def _closest_point(box, target):
+    """The point on ``box`` nearest ``target``, per axis."""
+    return Point3D.create(
+        min(max(target.x, box.minPoint.x), box.maxPoint.x),
+        min(max(target.y, box.minPoint.y), box.maxPoint.y),
+        min(max(target.z, box.minPoint.z), box.maxPoint.z),
+    )
+
+
+class FakeMeasureManager:
+    """``Application.measureManager``: distance and angle between two entities.
+
+    Both values are computed from geometry the entities actually carry, so a
+    test that moves a body sees the measurement move with it.  Minimum distance
+    is exact for axis-aligned extents (zero when they overlap); angle is the
+    true angle between two directions, reported in radians as the real API does.
+    """
+
+    @property
+    def classType(self):
+        return type(self).__name__
+
+    def getOrientedBoundingBox(self, entity):
+        return _entity_box(entity)
+
+    def measureMinimumDistance(self, geometry_one, geometry_two):
+        box_one, box_two = _entity_box(geometry_one), _entity_box(geometry_two)
+        if box_one is None or box_two is None:
+            return FakeMeasureResults(None, is_valid=False)
+        gap = 0.0
+        for axis in ("x", "y", "z"):
+            low = max(getattr(box_one.minPoint, axis), getattr(box_two.minPoint, axis))
+            high = min(getattr(box_one.maxPoint, axis), getattr(box_two.maxPoint, axis))
+            if high < low:
+                gap += (low - high) ** 2
+        center_two = _entity_position(geometry_two) or Point3D.create()
+        center_one = _entity_position(geometry_one) or Point3D.create()
+        return FakeMeasureResults(
+            math.sqrt(gap),
+            _closest_point(box_one, center_two),
+            _closest_point(box_two, center_one),
+        )
+
+    def measureAngle(self, geometry_one, geometry_two, geometry_three=None):
+        vector_one, vector_two = _entity_direction(geometry_one), _entity_direction(geometry_two)
+        if vector_one is None or vector_two is None:
+            return FakeMeasureResults(None, is_valid=False)
+        if geometry_three is not None:
+            # A three-point angle: the second argument is the apex.
+            apex = _entity_position(geometry_two)
+            arm_one = _entity_position(geometry_one)
+            arm_two = _entity_position(geometry_three)
+            if apex is None or arm_one is None or arm_two is None:
+                return FakeMeasureResults(None, is_valid=False)
+            vector_one = Vector3D.create(arm_one.x - apex.x, arm_one.y - apex.y, arm_one.z - apex.z)
+            vector_two = Vector3D.create(arm_two.x - apex.x, arm_two.y - apex.y, arm_two.z - apex.z)
+        dot = vector_one.x * vector_two.x + vector_one.y * vector_two.y + vector_one.z * vector_two.z
+        cross = Vector3D.create(
+            vector_one.y * vector_two.z - vector_one.z * vector_two.y,
+            vector_one.z * vector_two.x - vector_one.x * vector_two.z,
+            vector_one.x * vector_two.y - vector_one.y * vector_two.x,
+        )
+        cross_magnitude = math.sqrt(cross.x**2 + cross.y**2 + cross.z**2)
+        return FakeMeasureResults(
+            math.atan2(cross_magnitude, dot),
+            _entity_position(geometry_one),
+            _entity_position(geometry_two),
+            _entity_position(geometry_three) if geometry_three is not None else None,
+        )
 
 
 # ── Value resolution ────────────────────────────────────────────────────────
@@ -316,9 +611,23 @@ class FakeFeature:
         self.kind = kind
         self.body = body
         self.timelineIndex = 0
+        # Timeline node state: the inspection tool reports all of these, and a
+        # built feature is healthy and unsuppressed until a test says otherwise.
+        self.isSuppressed = False
+        self.healthState = FeatureHealthStates.HealthyFeatureHealthState
+        self.errorOrWarningMessage = ""
+
+    @property
+    def index(self):
+        return self.timelineIndex
 
     def _recompute(self):
         self.body._recompute()
+
+    @property
+    def entity(self):
+        # The feature this timeline node represents.
+        return self
 
     @property
     def objectType(self):
@@ -342,6 +651,18 @@ class FakeBuiltFeature:
         # that produced none, so a tool reading .bodies never hits a hole.
         self.bodies = params.pop("bodies", None) or FakeBRepBodies()
         self.timelineIndex = 0
+        self.isSuppressed = False
+        self.healthState = FeatureHealthStates.HealthyFeatureHealthState
+        self.errorOrWarningMessage = ""
+
+    @property
+    def index(self):
+        return self.timelineIndex
+
+    @property
+    def entity(self):
+        # The feature this timeline node represents.
+        return self
 
     @property
     def objectType(self):

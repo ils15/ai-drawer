@@ -75,6 +75,28 @@ FeatureOperations = _enum(
     IntersectFeatureOperation=3,
     NewComponentFeatureOperation=4,
 )
+# The surface kind of a BRepFace, read as face.geometry.surfaceType.  All eight
+# published members are here because the inspection tool maps every one of them.
+SurfaceTypes = _enum(
+    PlaneSurfaceType=0,
+    CylinderSurfaceType=1,
+    ConeSurfaceType=2,
+    SphereSurfaceType=3,
+    TorusSurfaceType=4,
+    EllipticalCylinderSurfaceType=5,
+    EllipticalConeSurfaceType=6,
+    NurbsSurfaceType=7,
+)
+# Timeline node health, read as TimelineObject.healthState.  Unknown is a real
+# member and is not an error: it means the build cannot report a state.
+FeatureHealthStates = _enum(
+    HealthyFeatureHealthState=0,
+    WarningFeatureHealthState=1,
+    ErrorFeatureHealthState=2,
+    SuppressedFeatureHealthState=3,
+    RolledBackFeatureHealthState=4,
+    UnknownFeatureHealthState=5,
+)
 
 
 # ── Event plumbing ───────────────────────────────────────────────────────────

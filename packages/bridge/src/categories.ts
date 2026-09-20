@@ -34,6 +34,7 @@ export const TOOL_CATEGORIES = [
   "documentation",
   "diagnostics",
   "features",
+  "inspection",
 ] as const;
 
 export type ToolCategory = (typeof TOOL_CATEGORIES)[number];
@@ -81,6 +82,11 @@ export const CATEGORY_BY_TOOL: Readonly<Record<string, ToolCategory>> = {
   create_component: "features",
   create_body: "features",
   apply_appearance: "features",
+  // inspection
+  list_bodies: "inspection",
+  inspect_entity: "inspection",
+  list_features: "inspection",
+  measure: "inspection",
   // Bridge-owned helpers; never forwarded to the add-in.
   [HEALTH_TOOL]: "diagnostics",
   [CATEGORY_TOOL]: "diagnostics",
@@ -109,6 +115,8 @@ const CATEGORY_DESCRIPTIONS: Readonly<Record<ToolCategory, string>> = {
   diagnostics: "Readiness, health and reliability of the bridge and the add-in.",
   features:
     "Building CAD features on the active design: sketches, extrudes and revolves, components, primitive bodies, fillets, chamfers, holes, patterns and appearances.",
+  inspection:
+    "Reading the design without changing it: bodies and entity geometry, the feature timeline, and distances and angles between stored handles.",
 };
 
 /**
@@ -125,6 +133,7 @@ export function listToolCategories(): ToolCategoriesReport {
     documentation: [],
     diagnostics: [],
     features: [],
+    inspection: [],
   };
 
   let total = 0;
@@ -154,7 +163,7 @@ export function categoryTool(): Tool {
     name: CATEGORY_TOOL,
     description:
       "List the available tools grouped by category (viewport, selection, documents, parameters, " +
-      "documentation, diagnostics, features), together with a short description of each group. " +
+      "documentation, diagnostics, features, inspection), together with a short description of each group. " +
       "Bridge-owned; safe to call before any other tool to learn what this bridge can do. Only live " +
       "tools appear; roadmap tools are not listed.",
     inputSchema: { type: "object", properties: {} },

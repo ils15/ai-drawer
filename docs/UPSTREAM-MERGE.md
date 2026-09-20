@@ -90,7 +90,7 @@ grep -rnE "execute_python|call_autodesk_api|save_script|load_script|list_scripts
 python3 -c "from fusion_bridge import tool_surface; \
 print(sorted(t['name'] for t in tool_surface.TOOL_DEFINITIONS))"
 python3 -m ruff check .
-python3 -m unittest discover -s tests
+python3 -m pytest
 ```
 
 Step 5 is not paranoia: a subtree pull can resurrect the stripped modules and
@@ -183,14 +183,46 @@ file is ours, not inherited.
 
 ---
 
+## 6. What is inherited and what is ours
+
+The inherited surface is the **7 upstream tools** that were kept as-is:
+
+`capture_viewport`, `get_viewport`, `set_viewport`, `fetch_api_documentation`,
+`fetch_online_documentation`, `fetch_design_guide`, `get_active_selection`
+(upstream itself ships 13; the other 6 were the removed RCE tools, §4).
+
+Everything beyond those 7 is ours, written against the Fusion API directly:
+
+| Group | Tools | Count |
+| --- | --- | --- |
+| documents | `new_document`, `open_document`, `save_document`, `export_document`, `close_document`, `list_documents`, `get_document_info` | 7 |
+| parameters | `add_parameter`, `list_parameters`, `modify_parameter` | 3 |
+| diagnostics | `fusion_status`, `fusion_diagnostics` | 2 |
+| features | `create_sketch`, `extrude`, `revolve`, `create_component`, `create_body`, `apply_appearance`, `fillet`, `chamfer`, `hole`, `rectangular_pattern`, `circular_pattern` | 11 |
+| inspection | `list_bodies`, `inspect_entity`, `list_features`, `measure` | 4 |
+
+That is 27 tools of ours on top of the 7 inherited, for **34** served by the
+add-in. The bridge (`packages/bridge`, outside this subtree entirely) adds two
+it answers itself — `fusion_health` and `list_tool_categories` — for 36 total.
+
+Consequence for merges: upstream releases touch the inherited 7 and the shared
+modules in §4. Our five groups live in files upstream does not have
+(`fusion_bridge/tools/*.py`), so they conflict only with their own history —
+but the registry in `fusion_bridge/tool_surface.py` and the counts in
+`tests/test_tool_contract.py` must be re-read after every merge, because an
+upstream tool rename or addition changes the totals those tests pin.
+
+---
+
 ## Quick reference
 
 | Question | Answer |
 |---|---|
 | Merge command | `git subtree pull --prefix=packages/addin upstream/main` |
 | Forbidden | `git merge upstream/main` (silently drops files at repo root, §2) |
-| Run tests from | `packages/addin` — `python3 -m unittest discover -s tests` |
+| Run tests from | `packages/addin` — `python3 -m pytest` (the suite uses pytest markers; `unittest discover` cannot import `tests/`) |
 | Lint from | `packages/addin` — `python3 -m ruff check .` |
-| Coverage of changed modules | `python3 -m coverage run --include='*/fusion_bridge/tool_surface.py,*/fusion_bridge/operations.py,*/fusion_bridge/version_info.py,*/lib/mcp_server.py,*/lib/mcp_http_2026.py,*/settings.py' -m unittest discover -s tests && python3 -m coverage report -m` |
+| Coverage of changed modules | `python3 -m coverage run --include='*/fusion_bridge/tool_surface.py,*/fusion_bridge/operations.py,*/fusion_bridge/version_info.py,*/lib/mcp_server.py,*/lib/mcp_http_2026.py,*/settings.py' -m pytest && python3 -m coverage report -m` |
 | Banned-tool guard | `tests/test_removed_tools.py` |
-| Tools served today | `capture_viewport`, `get_viewport`, `set_viewport`, `fetch_api_documentation`, `fetch_online_documentation`, `fetch_design_guide`, `get_active_selection` (7; upstream ships 13) |
+| Inherited surface | `capture_viewport`, `get_viewport`, `set_viewport`, `fetch_api_documentation`, `fetch_online_documentation`, `fetch_design_guide`, `get_active_selection` (7; upstream ships 13) |
+| Tools served today | 34 add-in tools across 8 categories (7 inherited + 27 ours, see §6), plus 2 bridge-owned (`fusion_health`, `list_tool_categories`) |

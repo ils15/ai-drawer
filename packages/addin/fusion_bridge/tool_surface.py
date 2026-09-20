@@ -40,6 +40,12 @@ CREATE_COMPONENT = "create_component"
 CREATE_BODY = "create_body"
 APPLY_APPEARANCE = "apply_appearance"
 
+# Wave 4 — read-only inspection
+LIST_BODIES = "list_bodies"
+INSPECT_ENTITY = "inspect_entity"
+LIST_FEATURES = "list_features"
+MEASURE = "measure"
+
 # Tool categories.  A tool belongs to exactly one; ``build_tool_handlers`` and
 # the contract tests enforce that every definition carries one.
 CATEGORY_VIEWPORT = "viewport"
@@ -49,6 +55,7 @@ CATEGORY_PARAMETERS = "parameters"
 CATEGORY_DOCUMENTATION = "documentation"
 CATEGORY_DIAGNOSTICS = "diagnostics"
 CATEGORY_FEATURES = "features"
+CATEGORY_INSPECTION = "inspection"
 CATEGORIES = (
     CATEGORY_VIEWPORT,
     CATEGORY_SELECTION,
@@ -57,6 +64,7 @@ CATEGORIES = (
     CATEGORY_DOCUMENTATION,
     CATEGORY_DIAGNOSTICS,
     CATEGORY_FEATURES,
+    CATEGORY_INSPECTION,
 )
 
 # Resource constants
@@ -98,6 +106,12 @@ EXTRUDE_EXTENTS = ["distance", "through_all", "symmetric"]
 DIRECTIONS = ["positive", "negative"]
 BODY_SHAPES = ["box", "cylinder", "sphere"]
 DEFAULT_APPEARANCE_LIBRARY = "Fusion 360 Material Library"
+
+# ── Wave 4 shared enums ───────────────────────────────────────────────────
+# The two measurement APIs take different entity kinds, so the mode is part of
+# the contract: distance is a minimum gap in centimetres, angle is a rotation in
+# radians (reported in degrees too) between two directions.
+MEASURE_MODES = ["distance", "angle"]
 POINT_SCHEMA = {
     "type": "object",
     "description": "A 3D position or direction vector; x, y, and z are in centimeters.",
@@ -1218,6 +1232,102 @@ TOOL_DEFINITIONS = [
             "required": ["body", "appearance"],
         },
     },
+    {
+        "name": LIST_BODIES,
+        "category": CATEGORY_INSPECTION,
+        "description": (
+            "List every solid and surface body in the root component, read-only. Each entry "
+            "reports name, is_solid, volume in cubic centimetres, area in square centimetres, "
+            "the tight-fitting bounding box, and face and edge counts. A design with no bodies "
+            "returns an empty list, not an error. Call this to learn what a design contains "
+            "before changing anything."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "description": "No arguments; every body in the root component is reported.",
+            "properties": {},
+        },
+    },
+    {
+        "name": INSPECT_ENTITY,
+        "category": CATEGORY_INSPECTION,
+        "description": (
+            "Report the geometry of one body, face, or edge by stored selection handle, "
+            "read-only. The reported fields depend on the kind: a body reports volume, area, "
+            "bounding box, and face and edge counts; a face reports area, centroid, bounding "
+            "box, and surface kind (plane, cylinder, cone, sphere, torus, elliptical cylinder, "
+            "elliptical cone, or nurbs); an edge reports length and bounding box. Use "
+            "get_active_selection first to capture the handle."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "description": "Entity inspection; the stored handle of the body, face, or edge is required.",
+            "properties": {
+                "entity": {
+                    "type": "string",
+                    "description": "Stored selection handle of the body, face, or edge to inspect.",
+                    "examples": ["$selection_0"],
+                },
+            },
+            "required": ["entity"],
+        },
+    },
+    {
+        "name": LIST_FEATURES,
+        "category": CATEGORY_INSPECTION,
+        "description": (
+            "List the design's timeline nodes, read-only: sketches, construction geometry, "
+            "canvas and decal inserts, joints, PMI, and features alike, each with its kind. "
+            "Every node reports name, timeline index, is_suppressed, a health label (healthy, "
+            "warning, error, suppressed, rolled back, or unknown), and the message Fusion "
+            "attaches to a warning or an error. A direct design has no timeline and reports an "
+            "empty list."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "description": "No arguments; every timeline node is reported.",
+            "properties": {},
+        },
+    },
+    {
+        "name": MEASURE,
+        "category": CATEGORY_INSPECTION,
+        "description": (
+            "Measure between two stored selection handles, read-only. Mode 'distance' (the "
+            "default) reports the minimum gap in centimetres; mode 'angle' reports the value in "
+            "radians and in degrees. The two modes accept different geometry: distance measures "
+            "bodies, faces, edges, and points, while angle rejects bodies and curved faces and "
+            "measures points, linear edges, axes, and planar faces -- an incompatible kind is "
+            "reported as invalid_value rather than passed to the API."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "description": "Measurement; both entity handles are required, mode defaults to distance.",
+            "properties": {
+                "entity_one": {
+                    "type": "string",
+                    "description": "Stored selection handle of the first entity to measure.",
+                    "examples": ["$selection_0"],
+                },
+                "entity_two": {
+                    "type": "string",
+                    "description": "Stored selection handle of the second entity to measure.",
+                    "examples": ["$selection_1"],
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": MEASURE_MODES,
+                    "description": "What to measure: 'distance' for a minimum gap, 'angle' for a rotation.",
+                    "examples": ["distance"],
+                },
+            },
+            "required": ["entity_one", "entity_two"],
+        },
+    },
 ]
 
 _TOOL_NAMES = {t["name"] for t in TOOL_DEFINITIONS}
@@ -1255,6 +1365,10 @@ def build_tool_handlers(
     create_component,
     create_body,
     apply_appearance,
+    list_bodies,
+    inspect_entity,
+    list_features,
+    measure,
 ):
     """Build a dict mapping tool name to handler function.
 
@@ -1292,6 +1406,10 @@ def build_tool_handlers(
         CREATE_COMPONENT: create_component,
         CREATE_BODY: create_body,
         APPLY_APPEARANCE: apply_appearance,
+        LIST_BODIES: list_bodies,
+        INSPECT_ENTITY: inspect_entity,
+        LIST_FEATURES: list_features,
+        MEASURE: measure,
     }
     if set(handlers) != _TOOL_NAMES:
         raise RuntimeError(f"Handler registry mismatch: {set(handlers) ^ _TOOL_NAMES}")

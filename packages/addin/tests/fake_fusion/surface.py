@@ -36,6 +36,7 @@ PINNED_SURFACE: dict[str, dict[str, set[str]]] = {
             "registerCustomEvent",
             "fireCustomEvent",
             "unregisterCustomEvent",
+            "measureManager",
         },
         "LogLevels": {"InfoLogLevel", "ErrorLogLevel", "WarningLogLevel"},
         "LogTypes": {"FileLogType", "ConsoleLogType"},
@@ -95,6 +96,22 @@ PINNED_SURFACE: dict[str, dict[str, set[str]]] = {
         "Workspace": {"name"},
         "Selections": {"count", "item"},
         "Selection": {"entity"},
+        # Measurement: app.measureManager hands back MeasureResults.  Note there
+        # is no measureDistance -- the method does not exist in this API build;
+        # measureMinimumDistance is the distance entry point.
+        "MeasureManager": {
+            "classType",
+            "getOrientedBoundingBox",
+            "measureAngle",
+            "measureMinimumDistance",
+        },
+        "MeasureResults": {
+            "value",
+            "positionOne",
+            "positionTwo",
+            "positionThree",
+            "isValid",
+        },
         # Viewport.fit() exists in the real API but the tools drive fitting
         # through the camera (isFitView), so it is deliberately not pinned.
         "Viewport": {
@@ -243,14 +260,69 @@ PINNED_SURFACE: dict[str, dict[str, set[str]]] = {
             "NegativeExtentDirection",
             "SymmetricExtentDirection",
         },
+        # The surface kind of a BRepFace, read as face.geometry.surfaceType.
+        # All eight published members are mapped by the inspection tools.
+        "SurfaceTypes": {  # static enum
+            "PlaneSurfaceType",
+            "CylinderSurfaceType",
+            "ConeSurfaceType",
+            "SphereSurfaceType",
+            "TorusSurfaceType",
+            "EllipticalCylinderSurfaceType",
+            "EllipticalConeSurfaceType",
+            "NurbsSurfaceType",
+        },
+        # Timeline node health, read as TimelineObject.healthState.  Unknown is a
+        # state in its own right and is not reported as an error.
+        "FeatureHealthStates": {  # static enum
+            "HealthyFeatureHealthState",
+            "WarningFeatureHealthState",
+            "ErrorFeatureHealthState",
+            "SuppressedFeatureHealthState",
+            "RolledBackFeatureHealthState",
+            "UnknownFeatureHealthState",
+        },
+        "Surface": {"surfaceType"},
+        "Timeline": {"count", "item", "markerIndex"},
+        "TimelineObject": {
+            "name",
+            "index",
+            "isSuppressed",
+            "healthState",
+            "errorOrWarningMessage",
+            "entity",
+        },
         "BRepBodies": {"add", "item", "count"},
         "BRepBody": {
             "name",
             "volume",
+            "area",
             "isSolid",
             "isVisible",
             "material",
             "boundingBox",
+            "preciseBoundingBox",
+            "faces",
+            "edges",
+            "entityToken",
+        },
+        "BRepFace": {
+            "name",
+            "area",
+            "centroid",
+            "isPlanar",
+            "geometry",
+            "boundingBox",
+            "preciseBoundingBox",
+            "entityToken",
+        },
+        "BRepEdge": {
+            "name",
+            "length",
+            "geometry",
+            "boundingBox",
+            "preciseBoundingBox",
+            "entityToken",
         },
         "BoundingBox": {"minPoint", "maxPoint"},
     },

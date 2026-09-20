@@ -126,6 +126,49 @@ class FakeFusion:
         self.app.userInterface.activeSelections.add(face)
         return face
 
+    def add_body(self, name="Body1", shape="box", length=2.0, width=2.0, height=2.0, radius=1.0, select=True):
+        """Create a primitive body in the root component, and select it by default.
+
+        The geometry is real: a box or cylinder or sphere built by the transient
+        BRep manager, so its volume, area, and extent are derived from the
+        dimensions and an inspection or measurement sees the same numbers.
+        Adding a transient body to a design makes it a real ``BRepBody`` (with an
+        entity token, area, and face/edge collections), so the fake wraps it the
+        same way -- an inspection that reads ``objectType`` sees BRepBody, not
+        the transient kind the primitive was built as.
+        """
+        from .features import FakeBRepBody, FakeTemporaryBRepManager
+
+        manager = FakeTemporaryBRepManager.get()
+        if shape == "box":
+            temporary = manager.createBox(
+                values.BoundingBox3D.create(values.Point3D.create(), values.Point3D.create(length, width, height))
+            )
+        elif shape == "cylinder":
+            temporary = manager.createCylinderOrCone(
+                values.Point3D.create(), values.Point3D.create(0.0, 0.0, height), radius, radius
+            )
+        elif shape == "sphere":
+            temporary = manager.createSphere(values.Point3D.create(), radius)
+        else:  # pragma: no cover - guarded by the shape enum
+            raise ValueError(f"unknown shape: {shape}")
+        body = self.root.bodies.add(FakeBRepBody(name, temporary_body=temporary))
+        if select:
+            self.app.userInterface.activeSelections.add(body)
+        return body
+
+    def add_timeline_node(self, name, kind, health=None, message="", is_suppressed=False):
+        """Append a timeline node that is not a feature (a sketch, joint, or PMI).
+
+        The timeline holds these alongside features, and list_features reports
+        every node, so a test needs one to exercise a mixed timeline.
+        """
+        from .features import FakeTimelineObject
+
+        node = FakeTimelineObject(name, kind, health=health, message=message, is_suppressed=is_suppressed)
+        self.timeline._append_feature(node)
+        return node
+
 
 def make_fusion(with_document: bool = True, name: str = "Test Design") -> FakeFusion:
     """Build a fake Fusion.  By default one design document is already open."""

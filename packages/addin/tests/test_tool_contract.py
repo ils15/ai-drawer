@@ -45,6 +45,10 @@ class ToolSurfaceTests(unittest.TestCase):
         "create_component",
         "create_body",
         "apply_appearance",
+        "list_bodies",
+        "inspect_entity",
+        "list_features",
+        "measure",
     }
 
     def test_all_expected_tools_present(self):
@@ -95,6 +99,7 @@ class ToolCategoryTests(unittest.TestCase):
                 "documentation",
                 "diagnostics",
                 "features",
+                "inspection",
             },
         )
 

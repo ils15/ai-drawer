@@ -39,9 +39,13 @@ describe("allowlist", () => {
         "get_document_info",
         "get_viewport",
         "hole",
+        "inspect_entity",
+        "list_bodies",
         "list_documents",
+        "list_features",
         "list_parameters",
         "list_tool_categories",
+        "measure",
         "modify_parameter",
         "new_document",
         "open_document",
@@ -57,6 +61,15 @@ describe("allowlist", () => {
     expect(PENDING).toEqual([]);
     const wave3b = ["create_sketch", "extrude", "revolve", "create_component", "create_body", "apply_appearance"];
     for (const name of wave3b) expect(ALLOWED.has(name)).toBe(true);
+  });
+
+  it("promoted the Wave-4 read-only inspection surface out of PENDING into ALLOWED", () => {
+    expect(PENDING).toEqual([]);
+    const wave4 = ["list_bodies", "inspect_entity", "list_features", "measure"];
+    for (const name of wave4) {
+      expect(ALLOWED.has(name)).toBe(true);
+      expect(PENDING.includes(name)).toBe(false);
+    }
   });
 
   it("promoted the Wave-2 lifecycle, document and parameter tools out of PENDING", () => {
@@ -85,11 +98,12 @@ describe("allowlist", () => {
     );
   });
 
-  it("admits Wave-1 and Wave-3b names and refuses everything else", () => {
+  it("admits Wave-1, Wave-3b and Wave-4 names and refuses everything else", () => {
     expect(isAllowed("capture_viewport")).toBe(true);
     expect(isAllowed("fusion_health")).toBe(true);
     expect(isAllowed("create_sketch")).toBe(true);
     expect(isAllowed("apply_appearance")).toBe(true);
+    expect(isAllowed("measure")).toBe(true);
     expect(isAllowed("execute_python")).toBe(false);
     expect(isAllowed("apply_material")).toBe(false);
     expect(isAllowed("totally_made_up")).toBe(false);

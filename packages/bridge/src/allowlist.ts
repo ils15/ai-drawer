@@ -27,8 +27,8 @@ export const CATEGORY_TOOL = "list_tool_categories" as const;
 /**
  * The live curated surface: every tool the add-in serves today (Wave-1
  * viewport/selection/documentation, the Wave-2 lifecycle, document and parameter
- * tools, and the Wave-3a/3b feature tools), together with the bridge-owned health
- * probe.
+ * tools, the Wave-3a/3b feature tools, and the Wave-4 read-only inspection
+ * tools), together with the bridge-owned health probe.
  *
  * This set is kept in lockstep with the add-in's tool_surface.py by the
  * cross-package drift guard in tests/drift-guard.test.ts, which reads the
@@ -72,6 +72,11 @@ export const ALLOWED: ReadonlySet<string> = new Set<string>([
   "create_component",
   "create_body",
   "apply_appearance",
+  // Wave-4: read-only inspection.
+  "list_bodies",
+  "inspect_entity",
+  "list_features",
+  "measure",
   // Bridge-owned; never forwarded to the add-in.
   HEALTH_TOOL,
   CATEGORY_TOOL,
@@ -79,10 +84,11 @@ export const ALLOWED: ReadonlySet<string> = new Set<string>([
 
 /**
  * The promotion slot for tools the add-in does not serve yet. The Wave-3b CAD
- * surface (sketch, extrude/revolve, components, bodies, appearances) has landed
- * on both sides, so the list is empty today; it is kept so that enabling the
- * next wave is still a one-line move into ALLOWED, and so reviewers can see the
- * roadmap. Anything still listed here is deliberately NOT callable.
+ * surface (sketch, extrude/revolve, components, bodies, appearances) and the
+ * Wave-4 read-only inspection surface have landed on both sides, so the list is
+ * empty today; it is kept so that enabling the next wave is still a one-line
+ * move into ALLOWED, and so reviewers can see the roadmap. Anything still listed
+ * here is deliberately NOT callable.
  *
  * Every add-in tool MUST be classified exactly once here, in ALLOWED, or in
  * BLOCKED_HARD — the drift guard fails the build on an orphan (classified

@@ -1,13 +1,13 @@
 {
   "name": "ai-drawer-mcp",
-  "version": "0.1.0",
+  "version": "0.1.0-alpha.1",
   "description": "Stdio MCP bridge between LLM clients and the AutodeskFusionMCP add-in running inside Autodesk Fusion 360.",
   "type": "module",
   "license": "MIT",
-  "homepage": "https://github.com/frankhommers/autodesk-fusion-mcp#readme",
+  "homepage": "https://github.com/ils15/ai-drawer#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/frankhommers/autodesk-fusion-mcp.git"
+    "url": "git+https://github.com/ils15/ai-drawer.git"
   },
   "keywords": [
     "mcp",

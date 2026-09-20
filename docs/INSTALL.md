@@ -1,10 +1,12 @@
 # Installation — ai-drawer
 
-**Status: alpha.** This connects OpenCode to Autodesk Fusion 360 over MCP. It can
-inspect and drive an open Fusion document (viewport, selection, documentation
-lookups). It **cannot create CAD geometry yet** — that lands in a later wave. See
-[README](../README.md#status) and [docs/drawing-api-status.md](drawing-api-status.md)
-(coming later).
+**Status: alpha.** This connects OpenCode to Autodesk Fusion 360 over MCP and
+drives an open Fusion document — viewport, selection, documents, parameters,
+sketch/feature creation, read-only inspection, and documentation lookups, 36
+tools in all. See [README](../README.md#status) for the full surface.
+
+Drawings are out of scope for now: the drawing/sheet API surface is not exposed,
+so there is no way to create or edit a 2D drawing through this suite.
 
 The add-in folder is always named **`AutodeskFusionMCP`**. Do not rename it; the
 upstream sync procedure and the error messages all assume that name.
@@ -217,6 +219,44 @@ The WSL gateway auto-detection does **not** run on macOS or a plain Linux box �
 
 ---
 
+## 4. Enable the `ai-drawer` skill (recommended)
+
+The skill at [`skill/ai-drawer/SKILL.md`](../skill/ai-drawer/SKILL.md) is the
+operating manual the LLM reads: the canonical loop, the selection-handle
+addressing rule, units, and the no-retry contract on mutations. Without it the
+LLM can still drive the bridge — it just rediscovers those conventions by trial
+and error, which costs calls and occasionally parts.
+
+Copy or symlink the skill directory into OpenCode's skills folder:
+
+```bash
+# symlink: edits in the repo are then picked up automatically
+mkdir -p ~/.config/opencode/skills
+ln -s "$PWD/skill/ai-drawer" ~/.config/opencode/skills/ai-drawer
+```
+
+```bash
+# or copy, if you prefer a frozen snapshot
+mkdir -p ~/.config/opencode/skills
+cp -r skill/ai-drawer ~/.config/opencode/skills/ai-drawer
+```
+
+Restart the OpenCode session and the skill is loaded. It is advisory — it
+changes no tool behaviour, it only tells the LLM how the surface is meant to be
+used.
+
+---
+
+## Running alongside the upstream add-in
+
+This add-in and Frank Hommers' `autodesk-fusion-mcp` both listen on
+`127.0.0.1:8765` by default, so they cannot both run as shipped. Both defaults
+stay 8765 — move one of them with the documented knobs instead of patching
+either project. Full instructions, including which folder to rename:
+[COEXISTENCE.md](COEXISTENCE.md).
+
+---
+
 ## Troubleshooting
 
 The bridge's error text is written to be actionable. Match what you see to this
@@ -228,7 +268,7 @@ table.
 | **`... Open Fusion and start the 'AutodeskFusionMCP' add-in (Shift+S → Add-Ins tab → Run), then retry.`** | Same as above — this is the second line of the same message, naming the exact add-in. | Same as above. |
 | **`... If Fusion is on another machine set FUSION_MCP_HOST.`** | The bridge reached the end of its resolution order and nothing answered. | In WSL this usually means the add-in is still on `127.0.0.1` while you are in NAT mode. Re-bind it (above) or set `FUSION_MCP_HOST`. |
 | **`The Fusion add-in at <host>:<port> rejected the request (HTTP 403).`** | The request **reached** Fusion but was refused on origin grounds. The add-in only accepts requests carrying no `Origin` header, or `Origin: http://localhost:<port>` / `http://127.0.0.1:<port>`. | The bridge always sends a synthetic loopback `Origin`, so with shipped defaults this should not occur. If you see it, you have either pointed a **browser**-style client at the add-in, or changed the add-in's `allowed_origins`. Connect through the bridge, not directly. |
-| **`ai-drawer-mcp bridge bug: upstream answered HTTP 405/406. This should be impossible in a released build. Please report it.`** | A protocol contract violation **by the bridge itself**, not a config problem. It is surfaced loudly on purpose. | Do not try to configure around it. [Report it.](https://github.com/frankhommers/autodesk-fusion-mcp/issues) |
+| **`ai-drawer-mcp bridge bug: upstream answered HTTP 405/406. This should be impossible in a released build. Please report it.`** | A protocol contract violation **by the bridge itself**, not a config problem. It is surfaced loudly on purpose. | Do not try to configure around it. [Report it.](https://github.com/ils15/ai-drawer/issues) |
 | **Timeout: request hangs, then fails** | The tool reached Fusion but the Fusion **main thread** never answered within `MCP_MAIN_THREAD_TIMEOUT` (120 s in `settings.py`). Usually Fusion is busy, frozen, or showing a modal dialog. | Dismiss any blocking dialog in Fusion. If it recurs, the add-in's log (Fusion's text commands palette / output) shows whether your handler threw. |
 | **`fusion_health` says connected, but every tool fails** | Health only proves the HTTP endpoint is alive. Tool execution still needs the add-in's main-thread dispatch to work, and a tool can fail on its own merits (tier (b)). | Read the failure text the tool returns — it is meant to be reasoned about and retried. If *all* tools fail with the same unreachable-style message, the cached endpoint went stale; restart the OpenCode session (the bridge resolves once per process). |
 

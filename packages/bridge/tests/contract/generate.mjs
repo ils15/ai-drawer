@@ -62,7 +62,7 @@ const BRIDGE_OWNED = new Set(["fusion_health", "list_tool_categories"]);
 function validate(text) {
   const parsed = JSON.parse(text);
   const names = parsed.tools.map((tool) => tool.name);
-  if (names.length !== 30) throw new Error(`expected 30 add-in tools, got ${names.length}`);
+  if (names.length !== 34) throw new Error(`expected 34 add-in tools, got ${names.length}`);
   const dupes = names.filter((name, index) => names.indexOf(name) !== index);
   if (dupes.length > 0) throw new Error(`duplicate tool names in artifact: ${dupes.join(", ")}`);
   const leaked = names.filter((name) => BRIDGE_OWNED.has(name));

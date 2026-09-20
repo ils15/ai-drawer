@@ -853,6 +853,64 @@ export const TOOL_ARGS: Readonly<Record<string, z.ZodType>> = {
         "create_body, extrude, or a selection); the appearance is named from the library, which defaults to " +
         "the Fusion 360 Material Library. The appearance is copied into the design and assigned to the body.",
     ),
+  list_bodies: z
+    .strictObject({})
+    .describe(
+      "List every solid and surface body in the root component, read-only. Each entry " +
+        "reports name, is_solid, volume in cubic centimetres, area in square centimetres, " +
+        "the tight-fitting bounding box, and face and edge counts. A design with no bodies " +
+        "returns an empty list, not an error. Call this to learn what a design contains " +
+        "before changing anything.",
+    ),
+  inspect_entity: z
+    .strictObject({
+      entity: z
+        .string()
+        .describe("Stored selection handle of the body, face, or edge to inspect.")
+        .meta({ examples: ["$selection_0"] }),
+    })
+    .describe(
+      "Report the geometry of one body, face, or edge by stored selection handle, " +
+        "read-only. The reported fields depend on the kind: a body reports volume, area, " +
+        "bounding box, and face and edge counts; a face reports area, centroid, bounding " +
+        "box, and surface kind (plane, cylinder, cone, sphere, torus, elliptical cylinder, " +
+        "elliptical cone, or nurbs); an edge reports length and bounding box. Use " +
+        "get_active_selection first to capture the handle.",
+    ),
+  list_features: z
+    .strictObject({})
+    .describe(
+      "List the design's timeline nodes, read-only: sketches, construction geometry, " +
+        "canvas and decal inserts, joints, PMI, and features alike, each with its kind. " +
+        "Every node reports name, timeline index, is_suppressed, a health label (healthy, " +
+        "warning, error, suppressed, rolled back, or unknown), and the message Fusion " +
+        "attaches to a warning or an error. A direct design has no timeline and reports an " +
+        "empty list.",
+    ),
+  measure: z
+    .strictObject({
+      entity_one: z
+        .string()
+        .describe("Stored selection handle of the first entity to measure.")
+        .meta({ examples: ["$selection_0"] }),
+      entity_two: z
+        .string()
+        .describe("Stored selection handle of the second entity to measure.")
+        .meta({ examples: ["$selection_1"] }),
+      mode: z
+        .enum(["distance", "angle"])
+        .optional()
+        .describe("What to measure: 'distance' for a minimum gap, 'angle' for a rotation.")
+        .meta({ examples: ["distance"] }),
+    })
+    .describe(
+      "Measure between two stored selection handles, read-only. Mode 'distance' (the " +
+        "default) reports the minimum gap in centimetres; mode 'angle' reports the value in " +
+        "radians and in degrees. The two modes accept different geometry: distance measures " +
+        "bodies, faces, edges, and points, while angle rejects bodies and curved faces and " +
+        "measures points, linear edges, axes, and planar faces -- an incompatible kind is " +
+        "reported as invalid_value rather than passed to the API.",
+    ),
   list_tool_categories: z.object({}).describe("List the available tools grouped by category; takes no arguments."),
 };
 

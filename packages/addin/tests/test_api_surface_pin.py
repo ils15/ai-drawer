@@ -220,6 +220,20 @@ def _sample_graph(fusion):
         adsk.core.Point3D.create(), adsk.core.Point3D.create(1.0, 1.0, 1.0)
     )
 
+    # The inspection tools read bodies, faces, edges, the timeline, and the
+    # measure manager, so the pinned members of those classes need live objects.
+    from fake_fusion.features import FakeBRepFace, FakeTimelineObject
+
+    graph[("core", "MeasureManager")] = app.measureManager
+    graph[("core", "MeasureResults")] = app.measureManager.measureMinimumDistance(feature.body, direction)
+    graph[("fusion", "Timeline")] = design.timeline
+    graph[("fusion", "TimelineObject")] = design.timeline.item(0)
+    graph[("fusion", "BRepFace")] = FakeBRepFace("PinFace", area=1.0)
+    graph[("fusion", "BRepEdge")] = direction
+    graph[("fusion", "Surface")] = graph[("fusion", "BRepFace")].geometry
+    design.timeline._append_feature(FakeTimelineObject("PinSketch", "Sketch"))
+    graph[("fusion", "TimelineObject")] = design.timeline.item(design.timeline.count - 1)
+
     return graph
 
 

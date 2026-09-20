@@ -30,7 +30,7 @@ it("list_tool_categories is itself part of the live surface", () => {
 it("reports the whole live surface exactly once", () => {
   const report = listToolCategories();
 
-  expect(report.total_tools).toBe(32);
+  expect(report.total_tools).toBe(36);
   expect(report.total_tools).toBe(ALLOWED.size);
 
   const tools = listedTools(report);
@@ -92,6 +92,16 @@ it("groups the bridge-owned helpers under diagnostics", () => {
 
   expect(diagnostics).toContain(HEALTH_TOOL);
   expect(diagnostics).toContain(CATEGORY_TOOL);
+});
+
+it("groups the Wave-4 read-only inspection tools under inspection", () => {
+  const report = listToolCategories();
+
+  // The 8th category the add-in declares; a read-only bucket, distinct from the
+  // mutating "features" tools.
+  expect(report.categories.map((category) => category.name)).toContain("inspection");
+  const inspection = report.categories.find((category) => category.name === "inspection");
+  expect(inspection?.tools.sort()).toEqual(["inspect_entity", "list_bodies", "list_features", "measure"].sort());
 });
 
 it("advises the tool listing with an empty, argument-free schema", () => {

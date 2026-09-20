@@ -116,18 +116,21 @@ describe("bridge server", () => {
       expect(names).toContain("list_parameters");
       // The promoted Wave-3b sketch tool is live now, not a roadmap name.
       expect(names).toContain("create_sketch");
-      expect(names).toHaveLength(32);
+      // The promoted Wave-4 inspection tools are live now, not roadmap names.
+      expect(names).toContain("list_bodies");
+      expect(names).toContain("measure");
+      expect(names).toHaveLength(36);
       expect(events.some((event) => event.tool === "execute_python")).toBe(true);
     } finally {
       await harness_.close();
     }
   });
 
-  it("keeps the full live surface visible: 30 add-in tools plus the bridge-owned probes", async () => {
+  it("keeps the full live surface visible: 34 add-in tools plus the bridge-owned probes", async () => {
     const harness_ = await harness();
     try {
       const names = (await harness_.client.listTools()).tools.map((tool) => tool.name);
-      expect(names).toHaveLength(32);
+      expect(names).toHaveLength(36);
       expect(names).toEqual(
         expect.arrayContaining([
           // Wave-1: viewport, selection, documentation.
@@ -165,6 +168,11 @@ describe("bridge server", () => {
           "create_component",
           "create_body",
           "apply_appearance",
+          // Wave-4: read-only inspection.
+          "list_bodies",
+          "inspect_entity",
+          "list_features",
+          "measure",
           // Bridge-owned; answered locally, never forwarded.
           "fusion_health",
           "list_tool_categories",
@@ -209,7 +217,7 @@ describe("bridge server", () => {
         categories: Array<{ name: string; description: string; tools: string[] }>;
         total_tools: number;
       };
-      expect(report.total_tools).toBe(32);
+      expect(report.total_tools).toBe(36);
       // The closed category set the add-in declares, nothing outside it.
       expect(report.categories.map((category) => category.name)).toEqual([
         "viewport",
@@ -219,11 +227,12 @@ describe("bridge server", () => {
         "documentation",
         "diagnostics",
         "features",
+        "inspection",
       ]);
       // Every live tool is classified exactly once across the categories.
       const classified = report.categories.flatMap((category) => category.tools);
-      expect(classified).toHaveLength(32);
-      expect(new Set(classified).size).toBe(32);
+      expect(classified).toHaveLength(36);
+      expect(new Set(classified).size).toBe(36);
       // Retired and BLOCKED_HARD names can never be surfaced.
       expect(classified).not.toContain("apply_material");
       expect(classified).not.toContain("execute_python");
@@ -303,6 +312,54 @@ describe("bridge server", () => {
       expect(result.isError).not.toBe(true);
       expect((result.content[0] as { text: string }).text).toBe("called create_sketch");
       expect(addin.forwardedCalls).toContain("create_sketch");
+    } finally {
+      await harness_.close();
+    }
+  });
+
+  it("forwards a promoted Wave-4 inspection tool instead of refusing it", async () => {
+    const harness_ = await harness();
+    try {
+      const result: CallToolResult = await harness_.client.callTool({
+        name: "measure",
+        arguments: { entity_one: "$selection_0", entity_two: "$selection_1", mode: "distance" },
+      });
+      expect(result.isError).not.toBe(true);
+      expect((result.content[0] as { text: string }).text).toBe("called measure");
+      expect(addin.forwardedCalls).toContain("measure");
+    } finally {
+      await harness_.close();
+    }
+  });
+
+  it("forwards a Wave-4 tool that takes no arguments", async () => {
+    const harness_ = await harness();
+    try {
+      const result: CallToolResult = await harness_.client.callTool({
+        name: "list_bodies",
+        arguments: {},
+      });
+      expect(result.isError).not.toBe(true);
+      expect((result.content[0] as { text: string }).text).toBe("called list_bodies");
+      expect(addin.forwardedCalls).toContain("list_bodies");
+    } finally {
+      await harness_.close();
+    }
+  });
+
+  it("reports invalid_arguments when a Wave-4 measure mode is not served", async () => {
+    const harness_ = await harness();
+    try {
+      const result: CallToolResult = await harness_.client.callTool({
+        name: "measure",
+        arguments: { entity_one: "$selection_0", entity_two: "$selection_1", mode: "volume" },
+      });
+
+      const body = errorEnvelope(result);
+      expect(body.error_kind).toBe("invalid_arguments");
+      expect(body.message).toContain("measure");
+      expect(body.hint).toContain("mode");
+      expect(addin.forwardedCalls).not.toContain("measure");
     } finally {
       await harness_.close();
     }

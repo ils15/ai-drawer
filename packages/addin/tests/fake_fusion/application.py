@@ -144,6 +144,10 @@ class FakeApplication:
         # Installed material/appearance libraries; the factory seeds the
         # standard one so apply_appearance has something honest to read.
         self.materialLibraries = None
+        # Distance and angle measurement, reached as app.measureManager.
+        from .features import FakeMeasureManager
+
+        self.measureManager = FakeMeasureManager()
         # Documents become active the moment they are created or opened; the
         # collection drives that through this hook.
         documents._set_activate(self._activate)

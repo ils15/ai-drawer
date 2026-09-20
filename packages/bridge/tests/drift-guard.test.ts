@@ -302,7 +302,7 @@ function isEqual(a: unknown, b: unknown): boolean {
 }
 
 it("keeps the bridge in sync with the add-in contract artifact", () => {
-  expect(artifact.tools).toHaveLength(30);
+  expect(artifact.tools).toHaveLength(34);
   assertSurfaceInSync();
 });
 
@@ -315,8 +315,8 @@ it("keeps the committed contract artifact generated from the live add-in source"
 }, 30_000);
 
 it("reports the expected tool count through the live allowlist", () => {
-  // 30 add-in tools + the two bridge-owned helpers (health probe, category listing).
-  expect([...ALLOWED]).toHaveLength(32);
+  // 34 add-in tools + the two bridge-owned helpers (health probe, category listing).
+  expect([...ALLOWED]).toHaveLength(36);
 });
 
 /* ── Mutation proof: the guard must fail when the surface drifts ─────────── */

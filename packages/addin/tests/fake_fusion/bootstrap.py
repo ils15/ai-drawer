@@ -34,6 +34,8 @@ from .features import (
     FakeCircularPatternFeatures,
     FakeFilletFeatures,
     FakeHoleFeatures,
+    FakeMeasureManager,
+    FakeMeasureResults,
     FakeRectangularPatternFeatures,
 )
 
@@ -64,6 +66,9 @@ _CORE_ATTRIBUTES = {
     "MaterialLibrary": features.FakeMaterialLibrary,
     "Appearances": features.FakeAppearances,
     "Appearance": features.FakeAppearance,
+    # Measurement: reached as app.measureManager and returned by its methods.
+    "MeasureManager": FakeMeasureManager,
+    "MeasureResults": FakeMeasureResults,
 }
 
 _FUSION_ATTRIBUTES = {
@@ -72,6 +77,11 @@ _FUSION_ATTRIBUTES = {
     "DistanceUnits": values.DistanceUnits,
     "MeshRefinementSettings": values.MeshRefinementSettings,
     "FeatureOperations": values.FeatureOperations,
+    # The inspection tools read these enumerations directly
+    # (adsk.fusion.SurfaceTypes.*, adsk.fusion.FeatureHealthStates.*), so they
+    # must exist on the installed fake just as on the real module.
+    "SurfaceTypes": values.SurfaceTypes,
+    "FeatureHealthStates": values.FeatureHealthStates,
     # The feature tools read these enumerations directly (adsk.fusion.ExtentDirections.*),
     # so they must exist on the installed fake just as on the real module.
     "ExtentDirections": values.ExtentDirections,
