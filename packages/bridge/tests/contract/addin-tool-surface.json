@@ -1006,6 +1006,459 @@
           "quantity"
         ]
       }
+    },
+    {
+      "name": "create_sketch",
+      "category": "features",
+      "description": "Draw one or more curves on a base construction plane (xy, xz, or yz) of the root component. Each curve is a line between two points, a circle about a centre and radius, or an arc about a centre from a start point through a sweep; all coordinates and radii are in centimetres and arc sweeps are in degrees (counter-clockwise positive). Returns the sketch handle plus one handle per closed profile Fusion derived from the curves ($profile_0, ...); profiles are populated automatically, and an open curve chain yields none. Give a profile handle to extrude or revolve to make solid geometry.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "plane": {
+            "type": "string",
+            "enum": [
+              "xy",
+              "xz",
+              "yz"
+            ],
+            "description": "Base construction plane the sketch lies on.",
+            "examples": [
+              "xy"
+            ]
+          },
+          "curves": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One sketch curve: a line, a circle, or an arc, told apart by 'kind'. Points are in centimetres; a line needs start and end, a circle needs center and radius, and an arc needs center, start, and sweep degrees.",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "line",
+                    "circle",
+                    "arc"
+                  ],
+                  "description": "Which curve this is, and which members are required."
+                },
+                "start": {
+                  "type": "object",
+                  "description": "A 3D position or direction vector; x, y, and z are in centimeters.",
+                  "properties": {
+                    "x": {
+                      "type": "number",
+                      "minimum": -1000000000000.0,
+                      "maximum": 1000000000000.0,
+                      "description": "X component in centimeters."
+                    },
+                    "y": {
+                      "type": "number",
+                      "minimum": -1000000000000.0,
+                      "maximum": 1000000000000.0,
+                      "description": "Y component in centimeters."
+                    },
+                    "z": {
+                      "type": "number",
+                      "minimum": -1000000000000.0,
+                      "maximum": 1000000000000.0,
+                      "description": "Z component in centimeters."
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "z"
+                  ],
+                  "additionalProperties": false
+                },
+                "end": {
+                  "type": "object",
+                  "description": "A 3D position or direction vector; x, y, and z are in centimeters.",
+                  "properties": {
+                    "x": {
+                      "type": "number",
+                      "minimum": -1000000000000.0,
+                      "maximum": 1000000000000.0,
+                      "description": "X component in centimeters."
+                    },
+                    "y": {
+                      "type": "number",
+                      "minimum": -1000000000000.0,
+                      "maximum": 1000000000000.0,
+                      "description": "Y component in centimeters."
+                    },
+                    "z": {
+                      "type": "number",
+                      "minimum": -1000000000000.0,
+                      "maximum": 1000000000000.0,
+                      "description": "Z component in centimeters."
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "z"
+                  ],
+                  "additionalProperties": false
+                },
+                "center": {
+                  "type": "object",
+                  "description": "A 3D position or direction vector; x, y, and z are in centimeters.",
+                  "properties": {
+                    "x": {
+                      "type": "number",
+                      "minimum": -1000000000000.0,
+                      "maximum": 1000000000000.0,
+                      "description": "X component in centimeters."
+                    },
+                    "y": {
+                      "type": "number",
+                      "minimum": -1000000000000.0,
+                      "maximum": 1000000000000.0,
+                      "description": "Y component in centimeters."
+                    },
+                    "z": {
+                      "type": "number",
+                      "minimum": -1000000000000.0,
+                      "maximum": 1000000000000.0,
+                      "description": "Z component in centimeters."
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "z"
+                  ],
+                  "additionalProperties": false
+                },
+                "radius": {
+                  "type": "number",
+                  "minimum": 1e-09,
+                  "maximum": 1000000000000.0,
+                  "description": "Circle radius in centimetres.",
+                  "examples": [
+                    1.0
+                  ]
+                },
+                "sweep": {
+                  "type": "number",
+                  "minimum": -360,
+                  "maximum": 360,
+                  "description": "Arc sweep in degrees; positive is counter-clockwise.",
+                  "examples": [
+                    90
+                  ]
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            "description": "Curves to draw, in centimetres. Endpoints that coincide chain into closed profiles, so the order of curves does not matter.",
+            "examples": [
+              [
+                {
+                  "kind": "line",
+                  "start": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "end": {
+                    "x": 2,
+                    "y": 0,
+                    "z": 0
+                  }
+                },
+                {
+                  "kind": "line",
+                  "start": {
+                    "x": 2,
+                    "y": 0,
+                    "z": 0
+                  },
+                  "end": {
+                    "x": 2,
+                    "y": 2,
+                    "z": 0
+                  }
+                },
+                {
+                  "kind": "line",
+                  "start": {
+                    "x": 2,
+                    "y": 2,
+                    "z": 0
+                  },
+                  "end": {
+                    "x": 0,
+                    "y": 2,
+                    "z": 0
+                  }
+                },
+                {
+                  "kind": "line",
+                  "start": {
+                    "x": 0,
+                    "y": 2,
+                    "z": 0
+                  },
+                  "end": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  }
+                }
+              ]
+            ]
+          }
+        },
+        "required": [
+          "plane",
+          "curves"
+        ]
+      }
+    },
+    {
+      "name": "extrude",
+      "category": "features",
+      "description": "Sweep a closed profile into a solid body. The profile is a handle returned by create_sketch ($profile_0). operation controls how the new geometry combines with existing bodies (new_body by default). extent is a fixed distance (needs the distance argument), through_all, or a symmetric sweep about the profile plane (also needs distance); direction applies to the one-sided extents. The created body is returned as a handle for appearance or selection tools.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "profile": {
+            "type": "string",
+            "description": "Handle of the closed profile to sweep, from create_sketch.",
+            "examples": [
+              "$profile_0"
+            ]
+          },
+          "operation": {
+            "type": "string",
+            "enum": [
+              "new_body",
+              "join",
+              "cut",
+              "intersect"
+            ],
+            "description": "How the extruded geometry combines with existing bodies (default: new_body)."
+          },
+          "extent": {
+            "type": "string",
+            "enum": [
+              "distance",
+              "through_all",
+              "symmetric"
+            ],
+            "description": "Extrude extent: distance, through all geometry, or symmetric (default: distance)."
+          },
+          "distance": {
+            "type": "string",
+            "description": "Extrude distance as a Fusion expression; a bare number is centimetres. Required for extent distance and symmetric.",
+            "examples": [
+              "10 mm",
+              2.5
+            ]
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "positive",
+              "negative"
+            ],
+            "description": "Which way a one-sided extent runs off the profile (default: positive)."
+          }
+        },
+        "required": [
+          "profile"
+        ]
+      }
+    },
+    {
+      "name": "revolve",
+      "category": "features",
+      "description": "Sweep a closed profile about an axis through an angle to make a solid body. The profile is a handle from create_sketch; the axis is a stored entity handle or one of the strings x, y, or z for the root component's construction axes. The angle is a Fusion angle expression and defaults to a full 360-degree turn. operation controls how the new geometry combines with existing bodies.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "profile": {
+            "type": "string",
+            "description": "Handle of the closed profile to revolve, from create_sketch.",
+            "examples": [
+              "$profile_0"
+            ]
+          },
+          "axis": {
+            "type": "string",
+            "description": "Stored entity handle of the axis, or x, y, or z for a construction axis.",
+            "examples": [
+              "$selection_0",
+              "y"
+            ]
+          },
+          "operation": {
+            "type": "string",
+            "enum": [
+              "new_body",
+              "join",
+              "cut",
+              "intersect"
+            ],
+            "description": "How the revolved geometry combines with existing bodies (default: new_body)."
+          },
+          "angle": {
+            "type": "string",
+            "description": "Total sweep as a Fusion angle expression; a bare number is degrees (default: full circle).",
+            "examples": [
+              "360 deg",
+              "180 deg"
+            ]
+          }
+        },
+        "required": [
+          "profile",
+          "axis"
+        ]
+      }
+    },
+    {
+      "name": "create_component",
+      "category": "features",
+      "description": "Add a new component to the root component's assembly and name it. The component is created by adding an occurrence with an identity transform, then naming the component that occurrence owns; the returned component handle identifies it for later selection.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name of the new component; must be unique enough for the caller to find later.",
+            "examples": [
+              "Bracket"
+            ]
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    },
+    {
+      "name": "create_body",
+      "category": "features",
+      "description": "Add a primitive box, cylinder, or sphere body to the root component. Dimensions are in centimetres: a box needs length, width, and height; a cylinder needs radius and height; a sphere needs radius. A parametric design wraps the body in a base feature on the timeline, a direct design adds it directly. The returned body handle can be given to apply_appearance.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "shape": {
+            "type": "string",
+            "enum": [
+              "box",
+              "cylinder",
+              "sphere"
+            ],
+            "description": "Primitive shape to build.",
+            "examples": [
+              "box"
+            ]
+          },
+          "dimensions": {
+            "type": "object",
+            "description": "Body dimensions in centimetres; which members are required depends on the shape: box needs length, width, and height; cylinder needs radius and height; sphere needs radius alone.",
+            "properties": {
+              "length": {
+                "type": "number",
+                "minimum": 1e-09,
+                "maximum": 1000000000000.0,
+                "description": "Box length along the x axis in centimetres.",
+                "examples": [
+                  2.0
+                ]
+              },
+              "width": {
+                "type": "number",
+                "minimum": 1e-09,
+                "maximum": 1000000000000.0,
+                "description": "Box width along the y axis in centimetres.",
+                "examples": [
+                  2.0
+                ]
+              },
+              "height": {
+                "type": "number",
+                "minimum": 1e-09,
+                "maximum": 1000000000000.0,
+                "description": "Box or cylinder height along the z axis in centimetres.",
+                "examples": [
+                  3.0
+                ]
+              },
+              "radius": {
+                "type": "number",
+                "minimum": 1e-09,
+                "maximum": 1000000000000.0,
+                "description": "Cylinder or sphere radius in centimetres.",
+                "examples": [
+                  1.0
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          "name": {
+            "type": "string",
+            "description": "Optional body name; Fusion assigns one when omitted.",
+            "examples": [
+              "Housing"
+            ]
+          }
+        },
+        "required": [
+          "shape",
+          "dimensions"
+        ]
+      }
+    },
+    {
+      "name": "apply_appearance",
+      "category": "features",
+      "description": "Assign an appearance from a material library to a body. The body is a stored handle (from create_body, extrude, or a selection); the appearance is named from the library, which defaults to the Fusion 360 Material Library. The appearance is copied into the design and assigned to the body.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "body": {
+            "type": "string",
+            "description": "Stored handle of the body to recolour.",
+            "examples": [
+              "$body_0"
+            ]
+          },
+          "appearance": {
+            "type": "string",
+            "description": "Name of the appearance in the library.",
+            "examples": [
+              "Steel",
+              "Aluminum"
+            ]
+          },
+          "library": {
+            "type": "string",
+            "description": "Material library for the appearance (default: Fusion 360 Material Library).",
+            "examples": [
+              "Fusion 360 Material Library"
+            ]
+          }
+        },
+        "required": [
+          "body",
+          "appearance"
+        ]
+      }
     }
   ]
 }

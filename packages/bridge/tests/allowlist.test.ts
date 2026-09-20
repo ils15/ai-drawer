@@ -18,10 +18,15 @@ describe("allowlist", () => {
     expect([...ALLOWED].sort()).toEqual(
       [
         "add_parameter",
+        "apply_appearance",
         "capture_viewport",
         "chamfer",
         "circular_pattern",
         "close_document",
+        "create_body",
+        "create_component",
+        "create_sketch",
+        "extrude",
         "export_document",
         "fetch_api_documentation",
         "fetch_design_guide",
@@ -41,17 +46,17 @@ describe("allowlist", () => {
         "new_document",
         "open_document",
         "rectangular_pattern",
+        "revolve",
         "save_document",
         "set_viewport",
       ].sort(),
     );
   });
 
-  it("keeps the genuine Wave-3 CAD surface in PENDING, not in ALLOWED", () => {
-    expect(PENDING).toEqual(
-      ["apply_material", "create_body", "create_component", "create_sketch", "extrude", "revolve"].sort(),
-    );
-    for (const name of PENDING) expect(ALLOWED.has(name)).toBe(false);
+  it("promoted the Wave-3b CAD surface out of PENDING into ALLOWED", () => {
+    expect(PENDING).toEqual([]);
+    const wave3b = ["create_sketch", "extrude", "revolve", "create_component", "create_body", "apply_appearance"];
+    for (const name of wave3b) expect(ALLOWED.has(name)).toBe(true);
   });
 
   it("promoted the Wave-2 lifecycle, document and parameter tools out of PENDING", () => {
@@ -80,11 +85,13 @@ describe("allowlist", () => {
     );
   });
 
-  it("admits Wave-1 names and refuses everything else", () => {
+  it("admits Wave-1 and Wave-3b names and refuses everything else", () => {
     expect(isAllowed("capture_viewport")).toBe(true);
     expect(isAllowed("fusion_health")).toBe(true);
+    expect(isAllowed("create_sketch")).toBe(true);
+    expect(isAllowed("apply_appearance")).toBe(true);
     expect(isAllowed("execute_python")).toBe(false);
-    expect(isAllowed("create_sketch")).toBe(false);
+    expect(isAllowed("apply_material")).toBe(false);
     expect(isAllowed("totally_made_up")).toBe(false);
     expect(isHardBlocked("execute_python")).toBe(true);
     expect(isHardBlocked("create_sketch")).toBe(false);
@@ -97,7 +104,12 @@ describe("allowlist", () => {
       name: "execute_python",
       reason: "blocked-hard",
     });
-    expect(gateToolCall("extrude")).toEqual({ allowed: false, name: "extrude", reason: "pending-wave3" });
+    expect(gateToolCall("extrude")).toEqual({ allowed: true, name: "extrude" });
+    expect(gateToolCall("apply_material")).toEqual({
+      allowed: false,
+      name: "apply_material",
+      reason: "not-allowed",
+    });
     expect(gateToolCall("nonsense")).toEqual({ allowed: false, name: "nonsense", reason: "not-allowed" });
   });
 
@@ -106,13 +118,13 @@ describe("allowlist", () => {
     const previous = setSecuritySink((event) => events.push(event));
     try {
       gateToolCall("execute_python");
-      gateToolCall("extrude");
+      gateToolCall("apply_material");
       gateToolCall("nonsense");
     } finally {
       setSecuritySink(previous);
     }
-    expect(events.map((event) => event.tool)).toEqual(["execute_python", "extrude", "nonsense"]);
-    expect(events.map((event) => event.reason)).toEqual(["blocked-hard", "pending-wave3", "not-allowed"]);
+    expect(events.map((event) => event.tool)).toEqual(["execute_python", "apply_material", "nonsense"]);
+    expect(events.map((event) => event.reason)).toEqual(["blocked-hard", "not-allowed", "not-allowed"]);
     expect(events.every((event) => event.ts.length > 0)).toBe(true);
   });
 
@@ -124,14 +136,14 @@ describe("allowlist", () => {
         "capture_viewport",
         "get_viewport",
         "execute_python",
-        "create_sketch",
+        "apply_material",
         "not_a_real_tool",
       ]);
       expect(filtered).toEqual(["capture_viewport", "get_viewport"]);
     } finally {
       setSecuritySink(previous);
     }
-    // Blocked advertisements are logged; Wave-3 and unknown ones are simply absent.
+    // Blocked advertisements are logged; retired and unknown ones are simply absent.
     expect(events.map((event) => event.tool)).toEqual(["execute_python"]);
   });
 

@@ -32,6 +32,14 @@ HOLE = "hole"
 RECTANGULAR_PATTERN = "rectangular_pattern"
 CIRCULAR_PATTERN = "circular_pattern"
 
+# Wave 3b — sketch, extrude/revolve, structure, and appearance
+CREATE_SKETCH = "create_sketch"
+EXTRUDE = "extrude"
+REVOLVE = "revolve"
+CREATE_COMPONENT = "create_component"
+CREATE_BODY = "create_body"
+APPLY_APPEARANCE = "apply_appearance"
+
 # Tool categories.  A tool belongs to exactly one; ``build_tool_handlers`` and
 # the contract tests enforce that every definition carries one.
 CATEGORY_VIEWPORT = "viewport"
@@ -79,6 +87,17 @@ DESIGN_TYPES = ["parametric", "direct"]
 EXPORT_FORMATS = ["step", "stl", "f3d", "iges", "obj", "pdf"]
 STL_DENSITY = ["low", "medium", "high"]
 STL_UNITS = ["mm", "cm", "in", "m"]
+
+# ── Wave 3b shared enums ───────────────────────────────────────────────────
+# Sketch geometry lives on one of the three base construction planes.  An
+# extrude combines its new geometry with existing bodies and sweeps it by a
+# distance, through everything, or symmetrically about the profile plane.
+SKETCH_PLANES = ["xy", "xz", "yz"]
+FEATURE_OPERATIONS = ["new_body", "join", "cut", "intersect"]
+EXTRUDE_EXTENTS = ["distance", "through_all", "symmetric"]
+DIRECTIONS = ["positive", "negative"]
+BODY_SHAPES = ["box", "cylinder", "sphere"]
+DEFAULT_APPEARANCE_LIBRARY = "Fusion 360 Material Library"
 POINT_SCHEMA = {
     "type": "object",
     "description": "A 3D position or direction vector; x, y, and z are in centimeters.",
@@ -92,6 +111,85 @@ POINT_SCHEMA = {
         for axis in ("x", "y", "z")
     },
     "required": ["x", "y", "z"],
+    "additionalProperties": False,
+}
+# The three curve variants share one object schema discriminated by ``kind``.
+# The owned validator's vocabulary has no ``oneOf``; the per-variant required
+# members are enforced by the handler, which reports them as invalid_value.
+CURVE_SCHEMA = {
+    "type": "object",
+    "description": (
+        "One sketch curve: a line, a circle, or an arc, told apart by 'kind'. "
+        "Points are in centimetres; a line needs start and end, a circle needs "
+        "center and radius, and an arc needs center, start, and sweep degrees."
+    ),
+    "properties": {
+        "kind": {
+            "type": "string",
+            "enum": ["line", "circle", "arc"],
+            "description": "Which curve this is, and which members are required.",
+        },
+        "start": POINT_SCHEMA,
+        "end": POINT_SCHEMA,
+        "center": POINT_SCHEMA,
+        "radius": {
+            "type": "number",
+            "minimum": 1e-9,
+            "maximum": 1e12,
+            "description": "Circle radius in centimetres.",
+            "examples": [1.0],
+        },
+        "sweep": {
+            "type": "number",
+            "minimum": -360,
+            "maximum": 360,
+            "description": "Arc sweep in degrees; positive is counter-clockwise.",
+            "examples": [90],
+        },
+    },
+    "required": ["kind"],
+    "additionalProperties": False,
+}
+# Dimensions are discriminated by 'shape'; the validator has no oneOf, so the
+# three variants share one object schema and the handler enforces that a box
+# has length/width/height, a cylinder radius/height, and a sphere radius.
+DIMENSIONS_SCHEMA = {
+    "type": "object",
+    "description": (
+        "Body dimensions in centimetres; which members are required depends on "
+        "the shape: box needs length, width, and height; cylinder needs radius "
+        "and height; sphere needs radius alone."
+    ),
+    "properties": {
+        "length": {
+            "type": "number",
+            "minimum": 1e-9,
+            "maximum": 1e12,
+            "description": "Box length along the x axis in centimetres.",
+            "examples": [2.0],
+        },
+        "width": {
+            "type": "number",
+            "minimum": 1e-9,
+            "maximum": 1e12,
+            "description": "Box width along the y axis in centimetres.",
+            "examples": [2.0],
+        },
+        "height": {
+            "type": "number",
+            "minimum": 1e-9,
+            "maximum": 1e12,
+            "description": "Box or cylinder height along the z axis in centimetres.",
+            "examples": [3.0],
+        },
+        "radius": {
+            "type": "number",
+            "minimum": 1e-9,
+            "maximum": 1e12,
+            "description": "Cylinder or sphere radius in centimetres.",
+            "examples": [1.0],
+        },
+    },
     "additionalProperties": False,
 }
 CAMERA_SCHEMA = {
@@ -900,6 +998,226 @@ TOOL_DEFINITIONS = [
             "required": ["entities", "axis", "quantity"],
         },
     },
+    {
+        "name": CREATE_SKETCH,
+        "category": CATEGORY_FEATURES,
+        "description": (
+            "Draw one or more curves on a base construction plane (xy, xz, or yz) of the "
+            "root component. Each curve is a line between two points, a circle about a "
+            "centre and radius, or an arc about a centre from a start point through a sweep; "
+            "all coordinates and radii are in centimetres and arc sweeps are in degrees "
+            "(counter-clockwise positive). Returns the sketch handle plus one handle per "
+            "closed profile Fusion derived from the curves ($profile_0, ...); profiles are "
+            "populated automatically, and an open curve chain yields none. Give a profile "
+            "handle to extrude or revolve to make solid geometry."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "description": "Sketch definition; plane and a non-empty curves array are required.",
+            "properties": {
+                "plane": {
+                    "type": "string",
+                    "enum": SKETCH_PLANES,
+                    "description": "Base construction plane the sketch lies on.",
+                    "examples": ["xy"],
+                },
+                "curves": {
+                    "type": "array",
+                    "items": CURVE_SCHEMA,
+                    "description": (
+                        "Curves to draw, in centimetres. Endpoints that coincide chain into "
+                        "closed profiles, so the order of curves does not matter."
+                    ),
+                    "examples": [
+                        [
+                            {"kind": "line", "start": {"x": 0, "y": 0, "z": 0}, "end": {"x": 2, "y": 0, "z": 0}},
+                            {"kind": "line", "start": {"x": 2, "y": 0, "z": 0}, "end": {"x": 2, "y": 2, "z": 0}},
+                            {"kind": "line", "start": {"x": 2, "y": 2, "z": 0}, "end": {"x": 0, "y": 2, "z": 0}},
+                            {"kind": "line", "start": {"x": 0, "y": 2, "z": 0}, "end": {"x": 0, "y": 0, "z": 0}},
+                        ]
+                    ],
+                },
+            },
+            "required": ["plane", "curves"],
+        },
+    },
+    {
+        "name": EXTRUDE,
+        "category": CATEGORY_FEATURES,
+        "description": (
+            "Sweep a closed profile into a solid body. The profile is a handle returned by "
+            "create_sketch ($profile_0). operation controls how the new geometry combines with "
+            "existing bodies (new_body by default). extent is a fixed distance (needs the "
+            "distance argument), through_all, or a symmetric sweep about the profile plane "
+            "(also needs distance); direction applies to the one-sided extents. The created "
+            "body is returned as a handle for appearance or selection tools."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "description": "Extrude definition; profile is required.",
+            "properties": {
+                "profile": {
+                    "type": "string",
+                    "description": "Handle of the closed profile to sweep, from create_sketch.",
+                    "examples": ["$profile_0"],
+                },
+                "operation": {
+                    "type": "string",
+                    "enum": FEATURE_OPERATIONS,
+                    "description": "How the extruded geometry combines with existing bodies (default: new_body).",
+                },
+                "extent": {
+                    "type": "string",
+                    "enum": EXTRUDE_EXTENTS,
+                    "description": "Extrude extent: distance, through all geometry, or symmetric (default: distance).",
+                },
+                "distance": {
+                    "type": "string",
+                    "description": (
+                        "Extrude distance as a Fusion expression; a bare number is "
+                        "centimetres. Required for extent distance and symmetric."
+                    ),
+                    "examples": ["10 mm", 2.5],
+                },
+                "direction": {
+                    "type": "string",
+                    "enum": DIRECTIONS,
+                    "description": "Which way a one-sided extent runs off the profile (default: positive).",
+                },
+            },
+            "required": ["profile"],
+        },
+    },
+    {
+        "name": REVOLVE,
+        "category": CATEGORY_FEATURES,
+        "description": (
+            "Sweep a closed profile about an axis through an angle to make a solid body. The "
+            "profile is a handle from create_sketch; the axis is a stored entity handle or one "
+            "of the strings x, y, or z for the root component's construction axes. The angle is "
+            "a Fusion angle expression and defaults to a full 360-degree turn. operation "
+            "controls how the new geometry combines with existing bodies."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "description": "Revolve definition; profile and axis are required.",
+            "properties": {
+                "profile": {
+                    "type": "string",
+                    "description": "Handle of the closed profile to revolve, from create_sketch.",
+                    "examples": ["$profile_0"],
+                },
+                "axis": {
+                    "type": "string",
+                    "description": "Stored entity handle of the axis, or x, y, or z for a construction axis.",
+                    "examples": ["$selection_0", "y"],
+                },
+                "operation": {
+                    "type": "string",
+                    "enum": FEATURE_OPERATIONS,
+                    "description": "How the revolved geometry combines with existing bodies (default: new_body).",
+                },
+                "angle": {
+                    "type": "string",
+                    "description": (
+                        "Total sweep as a Fusion angle expression; a bare number is degrees (default: full circle)."
+                    ),
+                    "examples": ["360 deg", "180 deg"],
+                },
+            },
+            "required": ["profile", "axis"],
+        },
+    },
+    {
+        "name": CREATE_COMPONENT,
+        "category": CATEGORY_FEATURES,
+        "description": (
+            "Add a new component to the root component's assembly and name it. The component "
+            "is created by adding an occurrence with an identity transform, then naming the "
+            "component that occurrence owns; the returned component handle identifies it for "
+            "later selection."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "description": "Component definition; name is required.",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Name of the new component; must be unique enough for the caller to find later.",
+                    "examples": ["Bracket"],
+                },
+            },
+            "required": ["name"],
+        },
+    },
+    {
+        "name": CREATE_BODY,
+        "category": CATEGORY_FEATURES,
+        "description": (
+            "Add a primitive box, cylinder, or sphere body to the root component. Dimensions "
+            "are in centimetres: a box needs length, width, and height; a cylinder needs "
+            "radius and height; a sphere needs radius. A parametric design wraps the body in a "
+            "base feature on the timeline, a direct design adds it directly. The returned body "
+            "handle can be given to apply_appearance."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "description": "Body definition; shape and dimensions are required.",
+            "properties": {
+                "shape": {
+                    "type": "string",
+                    "enum": BODY_SHAPES,
+                    "description": "Primitive shape to build.",
+                    "examples": ["box"],
+                },
+                "dimensions": DIMENSIONS_SCHEMA,
+                "name": {
+                    "type": "string",
+                    "description": "Optional body name; Fusion assigns one when omitted.",
+                    "examples": ["Housing"],
+                },
+            },
+            "required": ["shape", "dimensions"],
+        },
+    },
+    {
+        "name": APPLY_APPEARANCE,
+        "category": CATEGORY_FEATURES,
+        "description": (
+            "Assign an appearance from a material library to a body. The body is a stored "
+            "handle (from create_body, extrude, or a selection); the appearance is named from "
+            "the library, which defaults to the Fusion 360 Material Library. The appearance is "
+            "copied into the design and assigned to the body."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "description": "Appearance assignment; body and appearance are required.",
+            "properties": {
+                "body": {
+                    "type": "string",
+                    "description": "Stored handle of the body to recolour.",
+                    "examples": ["$body_0"],
+                },
+                "appearance": {
+                    "type": "string",
+                    "description": "Name of the appearance in the library.",
+                    "examples": ["Steel", "Aluminum"],
+                },
+                "library": {
+                    "type": "string",
+                    "description": f"Material library for the appearance (default: {DEFAULT_APPEARANCE_LIBRARY}).",
+                    "examples": [DEFAULT_APPEARANCE_LIBRARY],
+                },
+            },
+            "required": ["body", "appearance"],
+        },
+    },
 ]
 
 _TOOL_NAMES = {t["name"] for t in TOOL_DEFINITIONS}
@@ -931,6 +1249,12 @@ def build_tool_handlers(
     hole,
     rectangular_pattern,
     circular_pattern,
+    create_sketch,
+    extrude,
+    revolve,
+    create_component,
+    create_body,
+    apply_appearance,
 ):
     """Build a dict mapping tool name to handler function.
 
@@ -962,6 +1286,12 @@ def build_tool_handlers(
         HOLE: hole,
         RECTANGULAR_PATTERN: rectangular_pattern,
         CIRCULAR_PATTERN: circular_pattern,
+        CREATE_SKETCH: create_sketch,
+        EXTRUDE: extrude,
+        REVOLVE: revolve,
+        CREATE_COMPONENT: create_component,
+        CREATE_BODY: create_body,
+        APPLY_APPEARANCE: apply_appearance,
     }
     if set(handlers) != _TOOL_NAMES:
         raise RuntimeError(f"Handler registry mismatch: {set(handlers) ^ _TOOL_NAMES}")

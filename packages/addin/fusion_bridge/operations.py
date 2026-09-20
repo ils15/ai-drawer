@@ -65,4 +65,10 @@ TOOL_HANDLERS = tool_surface.build_tool_handlers(
     hole=_wrap(features.hole),
     rectangular_pattern=_wrap(features.rectangular_pattern),
     circular_pattern=_wrap(features.circular_pattern),
+    create_sketch=_wrap(features.create_sketch),
+    extrude=_wrap(features.extrude),
+    revolve=_wrap(features.revolve),
+    create_component=_wrap(features.create_component),
+    create_body=_wrap(features.create_body),
+    apply_appearance=_wrap(features.apply_appearance),
 )

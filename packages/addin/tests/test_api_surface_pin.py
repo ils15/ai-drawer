@@ -168,6 +168,58 @@ def _sample_graph(fusion):
     graph[("fusion", "RectangularPatternFeatureInput")] = rect_input
     graph[("fusion", "CircularPatternFeatureInput")] = circular_input
 
+    # The sketch/extrude/revolve/component/body/appearance tools reach their
+    # inputs through createInput() too, so the pinned instance members
+    # (setOneSideExtent, setAngleExtent, appearances, component, ...) need
+    # live objects to probe.
+    import adsk.core
+    import adsk.fusion
+
+    extrude_input = root.features.extrudeFeatures.createInput(
+        profile, adsk.fusion.FeatureOperations.NewBodyFeatureOperation
+    )
+    extrude_input.setOneSideExtent(
+        adsk.fusion.DistanceExtentDefinition.create(adsk.core.ValueInput.createByReal(1.0)),
+        adsk.fusion.ExtentDirections.PositiveExtentDirection,
+    )
+    extrude_feature = root.features.extrudeFeatures.add(extrude_input)
+    revolve_input = root.features.revolveFeatures.createInput(
+        profile, root.xConstructionAxis, adsk.fusion.FeatureOperations.NewBodyFeatureOperation
+    )
+    revolve_input.setAngleExtent(False, adsk.core.ValueInput.createByReal(90.0))
+    revolve_feature = root.features.revolveFeatures.add(revolve_input)
+    graph[("fusion", "ExtrudeFeatureInput")] = extrude_input
+    graph[("fusion", "RevolveFeatureInput")] = revolve_input
+    graph[("fusion", "ExtrudeFeature")] = extrude_feature
+    graph[("fusion", "RevolveFeature")] = revolve_feature
+
+    base_feature = root.features.baseFeatures.add()
+    graph[("fusion", "BaseFeature")] = base_feature
+
+    from fake_fusion.features import FakeTemporaryBRepManager
+
+    temporary_body = FakeTemporaryBRepManager.get().createBox(
+        adsk.core.BoundingBox3D.create(adsk.core.Point3D.create(), adsk.core.Point3D.create(1.0, 1.0, 1.0))
+    )
+    graph[("fusion", "TemporaryBRepBody")] = temporary_body
+
+    occurrence = root.occurrences.addNewComponent(adsk.core.Matrix3D.create())
+    graph[("fusion", "Occurrences")] = root.occurrences
+    graph[("fusion", "Occurrence")] = occurrence
+    graph[("fusion", "ConstructionPlane")] = root.xYConstructionPlane
+    graph[("fusion", "ConstructionAxis")] = root.xConstructionAxis
+
+    # Material libraries are reached through the application; the appearance
+    # tool copies an appearance out of one into the design.
+    graph[("core", "MaterialLibraries")] = app.materialLibraries
+    library = app.materialLibraries.itemByName("Fusion 360 Material Library")
+    graph[("core", "MaterialLibrary")] = library
+    graph[("core", "Appearances")] = library.appearances
+    graph[("core", "Appearance")] = library.appearances.itemByName("Steel")
+    graph[("core", "BoundingBox3D")] = adsk.core.BoundingBox3D.create(
+        adsk.core.Point3D.create(), adsk.core.Point3D.create(1.0, 1.0, 1.0)
+    )
+
     return graph
 
 

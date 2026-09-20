@@ -47,6 +47,11 @@ PINNED_SURFACE: dict[str, dict[str, set[str]]] = {
         "Point3D": {"create", "x", "y", "z"},  # create static
         "Vector3D": {"create", "x", "y", "z"},  # create static
         "Point2D": {"create", "x", "y"},  # create static
+        "BoundingBox3D": {"create", "minPoint", "maxPoint"},  # create static
+        "MaterialLibraries": {"item", "itemByName", "count"},
+        "MaterialLibrary": {"name", "appearances"},
+        "Appearances": {"item", "itemByName", "count", "addByCopy"},
+        "Appearance": {"name"},
         "DocumentTypes": {"FusionDesignDocumentType"},
         "ViewOrientations": {
             "FrontViewOrientation",
@@ -124,6 +129,7 @@ PINNED_SURFACE: dict[str, dict[str, set[str]]] = {
             "userParameters",
             "modelParameters",
             "exportManager",
+            "appearances",
             "computeAll",
             "recomputedFeatureCount",
         },
@@ -157,15 +163,33 @@ PINNED_SURFACE: dict[str, dict[str, set[str]]] = {
             "features",
             "bodies",
             "occurrences",
+            "xYConstructionPlane",
+            "yZConstructionPlane",
+            "zXConstructionPlane",
+            "xConstructionAxis",
+            "yConstructionAxis",
+            "zConstructionAxis",
         },
+        "ConstructionPlane": {"name"},
+        "ConstructionAxis": {"name"},
+        "Occurrences": {"item", "count", "addNewComponent"},
+        "Occurrence": {"name", "component"},
         "Sketches": {"add", "item", "count"},
         "Sketch": {"name", "sketchCurves", "sketchPoints", "profiles", "isVisible"},
+        "Profiles": {"item", "count"},
+        "SketchCurves": {"sketchLines", "sketchCircles", "sketchArcs"},
+        "SketchLines": {"addByTwoPoints"},
+        "SketchCircles": {"addByCenterRadius"},
+        "SketchArcs": {"addByCenterStartSweep"},
         "Features": {"item", "count"},
         "FilletFeatures": {"createInput", "add"},
         "ChamferFeatures": {"createInput2", "add"},
         "HoleFeatures": {"createSimpleInput", "add"},
         "RectangularPatternFeatures": {"createInput", "add"},
         "CircularPatternFeatures": {"createInput", "add"},
+        "ExtrudeFeatures": {"createInput", "add"},
+        "RevolveFeatures": {"createInput", "add"},
+        "BaseFeatures": {"add"},
         "FilletFeatureInput": {"edgeSetInputs"},
         "FilletEdgeCollection": {"addConstantRadiusEdgeSet"},
         "ChamferFeatureInput": {"chamferEdgeSets"},
@@ -189,6 +213,27 @@ PINNED_SURFACE: dict[str, dict[str, set[str]]] = {
             "totalAngle",
             "isSymmetric",
         },
+        "ExtrudeFeatureInput": {
+            "profile",
+            "operation",
+            "setOneSideExtent",
+            "setSymmetricExtent",
+        },
+        "RevolveFeatureInput": {
+            "profile",
+            "axis",
+            "operation",
+            "setAngleExtent",
+        },
+        "BaseFeature": {"name", "startEdit", "finishEdit"},
+        "ExtrudeFeature": {"name", "bodies"},
+        "RevolveFeature": {"name", "bodies"},
+        # Extent definitions are constructed by static create() calls.
+        "DistanceExtentDefinition": {"create"},  # static
+        "ThroughAllExtentDefinition": {"create"},  # static
+        # Transient solid primitives, reached through TemporaryBRepManager.get().
+        "TemporaryBRepManager": {"get"},  # static
+        "TemporaryBRepBody": {"boundingBox", "volume"},
         "PatternDistanceType": {  # static enum
             "ExtentPatternDistanceType",
             "SpacingPatternDistanceType",

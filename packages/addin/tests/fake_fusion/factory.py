@@ -21,6 +21,10 @@ class FakeFusion:
         self.failures = FailureInjector()
         self.documents = FakeDocuments(self._create_design, self.failures)
         self.app = FakeApplication(self.documents, self.events)
+        # The installed libraries are part of the process, not the document.
+        from .features import default_material_libraries
+
+        self.app.materialLibraries = default_material_libraries()
 
     def _create_design(self):
         return (

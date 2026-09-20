@@ -75,6 +75,12 @@ export const CATEGORY_BY_TOOL: Readonly<Record<string, ToolCategory>> = {
   hole: "features",
   rectangular_pattern: "features",
   circular_pattern: "features",
+  create_sketch: "features",
+  extrude: "features",
+  revolve: "features",
+  create_component: "features",
+  create_body: "features",
+  apply_appearance: "features",
   // Bridge-owned helpers; never forwarded to the add-in.
   [HEALTH_TOOL]: "diagnostics",
   [CATEGORY_TOOL]: "diagnostics",
@@ -101,7 +107,8 @@ const CATEGORY_DESCRIPTIONS: Readonly<Record<ToolCategory, string>> = {
   parameters: "Reading and editing the user parameters that drive the model.",
   documentation: "Searching the Fusion API and reading the bundled design guide.",
   diagnostics: "Readiness, health and reliability of the bridge and the add-in.",
-  features: "Building CAD features on the active design: fillets, chamfers, holes and patterns.",
+  features:
+    "Building CAD features on the active design: sketches, extrudes and revolves, components, primitive bodies, fillets, chamfers, holes, patterns and appearances.",
 };
 
 /**

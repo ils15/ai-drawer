@@ -102,30 +102,32 @@ describe("bridge server", () => {
     bridge.close && (await bridge.close());
   });
 
-  it("filters BLOCKED_HARD and pending tools out of tools/list", async () => {
+  it("filters BLOCKED_HARD and unlisted tools out of tools/list", async () => {
     const harness_ = await harness();
     try {
       const { tools }: { tools: Tool[] } = await harness_.client.listTools();
       const names = tools.map((tool) => tool.name);
 
       expect(names).not.toContain("execute_python");
-      expect(names).not.toContain("create_sketch");
+      expect(names).not.toContain("apply_material");
       expect(names).toContain("capture_viewport");
       expect(names).toContain("fusion_health");
       // A promoted Wave-2 tool must survive the filter, not just Wave-1 names.
       expect(names).toContain("list_parameters");
-      expect(names).toHaveLength(26);
+      // The promoted Wave-3b sketch tool is live now, not a roadmap name.
+      expect(names).toContain("create_sketch");
+      expect(names).toHaveLength(32);
       expect(events.some((event) => event.tool === "execute_python")).toBe(true);
     } finally {
       await harness_.close();
     }
   });
 
-  it("keeps the full live surface visible: 24 add-in tools plus the bridge-owned probes", async () => {
+  it("keeps the full live surface visible: 30 add-in tools plus the bridge-owned probes", async () => {
     const harness_ = await harness();
     try {
       const names = (await harness_.client.listTools()).tools.map((tool) => tool.name);
-      expect(names).toHaveLength(26);
+      expect(names).toHaveLength(32);
       expect(names).toEqual(
         expect.arrayContaining([
           // Wave-1: viewport, selection, documentation.
@@ -156,6 +158,13 @@ describe("bridge server", () => {
           "hole",
           "rectangular_pattern",
           "circular_pattern",
+          // Wave-3b: sketch, extrude/revolve, structure, and appearance.
+          "create_sketch",
+          "extrude",
+          "revolve",
+          "create_component",
+          "create_body",
+          "apply_appearance",
           // Bridge-owned; answered locally, never forwarded.
           "fusion_health",
           "list_tool_categories",
@@ -200,7 +209,7 @@ describe("bridge server", () => {
         categories: Array<{ name: string; description: string; tools: string[] }>;
         total_tools: number;
       };
-      expect(report.total_tools).toBe(26);
+      expect(report.total_tools).toBe(32);
       // The closed category set the add-in declares, nothing outside it.
       expect(report.categories.map((category) => category.name)).toEqual([
         "viewport",
@@ -213,10 +222,10 @@ describe("bridge server", () => {
       ]);
       // Every live tool is classified exactly once across the categories.
       const classified = report.categories.flatMap((category) => category.tools);
-      expect(classified).toHaveLength(26);
-      expect(new Set(classified).size).toBe(26);
-      // PENDING and BLOCKED_HARD names can never be surfaced.
-      expect(classified).not.toContain("create_sketch");
+      expect(classified).toHaveLength(32);
+      expect(new Set(classified).size).toBe(32);
+      // Retired and BLOCKED_HARD names can never be surfaced.
+      expect(classified).not.toContain("apply_material");
       expect(classified).not.toContain("execute_python");
       expect(addin.forwardedCalls.length).toBe(forwardedBefore);
     } finally {
@@ -244,18 +253,18 @@ describe("bridge server", () => {
     }
   });
 
-  it("rejects a pending Wave-3 tool with the pending_wave3 kind", async () => {
+  it("rejects a tool the gate does not admit with the not_allowed kind", async () => {
     const harness_ = await harness();
     try {
       const result: CallToolResult = await harness_.client.callTool({
-        name: "extrude",
-        arguments: { profile: "x" },
+        name: "apply_material",
+        arguments: { body: "$body_0", appearance: "Steel" },
       });
 
       const body = errorEnvelope(result);
-      expect(body.error_kind).toBe("pending_wave3");
-      expect(body.message).toContain("extrude");
-      expect(body.message).toContain("not available yet");
+      expect(body.error_kind).toBe("not_allowed");
+      expect(body.message).toContain("apply_material");
+      expect(body.message).toContain("tools/list");
     } finally {
       await harness_.close();
     }
@@ -271,6 +280,67 @@ describe("bridge server", () => {
       expect(result.isError).not.toBe(true);
       expect((result.content[0] as { text: string }).text).toBe("called fusion_status");
       expect(addin.forwardedCalls).toContain("fusion_status");
+    } finally {
+      await harness_.close();
+    }
+  });
+
+  it("forwards a promoted Wave-3b tool instead of refusing it", async () => {
+    const harness_ = await harness();
+    try {
+      const result: CallToolResult = await harness_.client.callTool({
+        name: "create_sketch",
+        arguments: {
+          plane: "xy",
+          curves: [
+            { kind: "line", start: { x: 0, y: 0, z: 0 }, end: { x: 2, y: 0, z: 0 } },
+            { kind: "line", start: { x: 2, y: 0, z: 0 }, end: { x: 2, y: 2, z: 0 } },
+            { kind: "line", start: { x: 2, y: 2, z: 0 }, end: { x: 0, y: 2, z: 0 } },
+            { kind: "line", start: { x: 0, y: 2, z: 0 }, end: { x: 0, y: 0, z: 0 } },
+          ],
+        },
+      });
+      expect(result.isError).not.toBe(true);
+      expect((result.content[0] as { text: string }).text).toBe("called create_sketch");
+      expect(addin.forwardedCalls).toContain("create_sketch");
+    } finally {
+      await harness_.close();
+    }
+  });
+
+  it("accepts a circle curve that omits line-only members", async () => {
+    const harness_ = await harness();
+    try {
+      // The add-in's validator has no oneOf: one flattened curve schema serves all
+      // three variants, and only 'kind' is required. The bridge mirrors that shape,
+      // so a circle without start/end must pass the gate just as it would upstream.
+      const result: CallToolResult = await harness_.client.callTool({
+        name: "create_sketch",
+        arguments: {
+          plane: "xy",
+          curves: [{ kind: "circle", center: { x: 1, y: 1, z: 0 }, radius: 1 }],
+        },
+      });
+      expect(result.isError).not.toBe(true);
+      expect((result.content[0] as { text: string }).text).toBe("called create_sketch");
+    } finally {
+      await harness_.close();
+    }
+  });
+
+  it("reports invalid_arguments for a curve kind the add-in does not serve", async () => {
+    const harness_ = await harness();
+    try {
+      const result: CallToolResult = await harness_.client.callTool({
+        name: "create_sketch",
+        arguments: { plane: "xy", curves: [{ kind: "spline" }] },
+      });
+
+      const body = errorEnvelope(result);
+      expect(body.error_kind).toBe("invalid_arguments");
+      expect(body.message).toContain("create_sketch");
+      expect(body.hint).toContain("kind");
+      expect(addin.forwardedCalls).not.toContain("create_sketch");
     } finally {
       await harness_.close();
     }

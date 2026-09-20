@@ -16,6 +16,8 @@ cannot compute.
 """
 
 import _fusion_test_bootstrap  # noqa: F401  (installs adsk mock + parent pkg shim)
+from fake_fusion import values
+from fake_fusion.features import FakeMaterialLibraries, FakeMaterialLibrary
 
 
 def _last_feature(fusion):
@@ -642,3 +644,374 @@ def test_circular_pattern_rejects_a_non_positive_sweep(fusion, call, mcp):
             total_angle="0 deg",
         )
     )
+
+
+# ── Extrude ────────────────────────────────────────────────────────────────────
+
+
+def _square_profile(call, mcp, plane="xy"):
+    """Draw a closed 2 cm square and hand back the handle of its single profile.
+
+    The solid tools address a profile by the handle ``create_sketch`` returned,
+    so this is the honest way to give an extrude or revolve test something to
+    sweep -- no handle is invented, and the profile is the one the chaining
+    detector actually closed.
+    """
+    payload = mcp.ok(
+        call(
+            "create_sketch",
+            plane=plane,
+            curves=[
+                {"kind": "line", "start": {"x": 0.0, "y": 0.0, "z": 0.0}, "end": {"x": 2.0, "y": 0.0, "z": 0.0}},
+                {"kind": "line", "start": {"x": 2.0, "y": 0.0, "z": 0.0}, "end": {"x": 2.0, "y": 2.0, "z": 0.0}},
+                {"kind": "line", "start": {"x": 2.0, "y": 2.0, "z": 0.0}, "end": {"x": 0.0, "y": 2.0, "z": 0.0}},
+                {"kind": "line", "start": {"x": 0.0, "y": 2.0, "z": 0.0}, "end": {"x": 0.0, "y": 0.0, "z": 0.0}},
+            ],
+        )
+    )
+    assert payload["profile_count"] == 1, "the sketch did not close into a profile"
+    return payload["profiles"][0]
+
+
+def test_extrude_sweeps_a_profile_handle_by_a_distance(fusion, call, mcp):
+    profile = _square_profile(call, mcp)
+
+    payload = mcp.ok(call("extrude", profile=profile, distance="10 mm"))
+
+    assert payload["feature_type"] == "Extrude"
+    assert payload["feature"] == "Extrude1"
+    assert payload["profile"] == profile
+    assert payload["operation"] == "new_body"
+    assert payload["extent"] == "distance"
+    assert payload["distance"] == "10 mm"
+    assert payload["direction"] == "positive"
+    assert payload["body"].startswith("$body_")
+
+    # The fake recorded the resolved dimension, not the expression string.
+    built = _last_feature(fusion)
+    assert built.params["distance_cm"] == 1.0
+    assert built.params["extent"] == "one_side"
+
+
+def test_extrude_round_trips_every_combination_operation(fusion, call, mcp):
+    profile = _square_profile(call, mcp)
+    enumerators = {
+        "new_body": values.FeatureOperations.NewBodyFeatureOperation,
+        "join": values.FeatureOperations.JoinFeatureOperation,
+        "cut": values.FeatureOperations.CutFeatureOperation,
+        "intersect": values.FeatureOperations.IntersectFeatureOperation,
+    }
+
+    for operation, enumerator in enumerators.items():
+        payload = mcp.ok(call("extrude", profile=profile, operation=operation, distance="5 mm"))
+        assert payload["operation"] == operation
+        # The fake records the FeatureOperations enumerator the name mapped to.
+        assert _last_feature(fusion).params["operation"] == enumerator
+
+
+def test_extrude_runs_the_other_way_with_a_negative_direction(fusion, call, mcp):
+    profile = _square_profile(call, mcp)
+
+    payload = mcp.ok(call("extrude", profile=profile, distance="10 mm", direction="negative"))
+
+    assert payload["direction"] == "negative"
+    assert payload["distance"] == "10 mm"
+
+
+def test_extrude_through_all_reports_no_distance(fusion, call, mcp):
+    profile = _square_profile(call, mcp)
+
+    payload = mcp.ok(call("extrude", profile=profile, extent="through_all"))
+
+    assert payload["extent"] == "through_all"
+    assert payload["distance"] is None
+    # A through-all extent is bounded by the bodies it meets; the fake builds the
+    # feature without fabricating a span, so no body handle is published.
+    assert payload["body"] is None
+    assert _last_feature(fusion).params["distance_cm"] is None
+
+
+def test_extrude_symmetric_sweeps_both_ways_and_reports_no_direction(fusion, call, mcp):
+    profile = _square_profile(call, mcp)
+
+    payload = mcp.ok(call("extrude", profile=profile, extent="symmetric", distance="5 mm"))
+
+    assert payload["extent"] == "symmetric"
+    assert payload["distance"] == "5 mm"
+    assert payload["direction"] is None
+    assert _last_feature(fusion).params["extent"] == "symmetric"
+
+
+def test_extrude_distance_is_required_for_distance_and_symmetric_extents(fusion, call, mcp):
+    profile = _square_profile(call, mcp)
+
+    assert "distance is required" in mcp.error(call("extrude", profile=profile))
+    assert "distance is required" in mcp.error(call("extrude", profile=profile, extent="symmetric"))
+
+
+def test_extrude_rejects_an_unknown_extent(fusion, call, mcp):
+    profile = _square_profile(call, mcp)
+    response = call("extrude", profile=profile, extent="sideways", distance="1 mm")
+
+    assert mcp.error_kind(response) == "invalid_value"
+    assert "extent must be 'distance', 'through_all', or 'symmetric'" in mcp.error(response)
+
+
+def test_extrude_rejects_an_unknown_operation(fusion, call, mcp):
+    profile = _square_profile(call, mcp)
+    response = call("extrude", profile=profile, operation="weld", distance="1 mm")
+
+    assert mcp.error_kind(response) == "invalid_value"
+    assert "operation must be one of 'new_body', 'join', 'cut', or 'intersect'" in mcp.error(response)
+
+
+def test_extrude_rejects_an_unknown_direction(fusion, call, mcp):
+    profile = _square_profile(call, mcp)
+    response = call("extrude", profile=profile, distance="1 mm", direction="up")
+
+    assert mcp.error_kind(response) == "invalid_value"
+    assert "direction must be 'positive' or 'negative'" in mcp.error(response)
+
+
+def test_extrude_rejects_a_profile_handle_that_is_not_in_the_store(fusion, call, mcp):
+    response = call("extrude", profile="$profile_no_such_0", distance="1 mm")
+
+    assert mcp.error_kind(response) == "invalid_value"
+    assert "not found" in mcp.error(response)
+
+
+def test_extrude_needs_an_active_design(fusion_empty, call, mcp):
+    assert mcp.error_kind(call("extrude", profile="$profile_0", distance="1 mm")) == "no_active_document"
+
+
+# ── Revolve ────────────────────────────────────────────────────────────────────
+
+
+def test_revolve_sweeps_a_profile_a_full_turn_about_a_construction_axis(fusion, call, mcp):
+    profile = _square_profile(call, mcp)
+
+    payload = mcp.ok(call("revolve", profile=profile, axis="y"))
+
+    assert payload["feature_type"] == "Revolve"
+    assert payload["feature"] == "Revolve1"
+    assert payload["profile"] == profile
+    assert payload["axis"] == "y"
+    assert payload["operation"] == "new_body"
+    assert payload["angle"] == "360 deg"
+
+
+def test_revolve_honours_a_partial_angle(fusion, call, mcp):
+    profile = _square_profile(call, mcp)
+
+    payload = mcp.ok(call("revolve", profile=profile, axis="y", angle="270 deg"))
+
+    assert payload["angle"] == "270 deg"
+    built = _last_feature(fusion)
+    assert built.params["angle_deg"] == 270.0
+    assert built.params["is_symmetric"] is False
+
+
+def test_revolve_accepts_a_stored_axis_handle(fusion, call, mcp):
+    profile = _square_profile(call, mcp)
+    fusion.add_edge("AxisEdge", 20.0)
+    _select(call)
+
+    payload = mcp.ok(call("revolve", profile=profile, axis="$selection_0", angle="180 deg"))
+
+    assert payload["feature_type"] == "Revolve"
+    assert payload["axis"] == "$selection_0"
+
+
+def test_revolve_rejects_an_axis_that_is_neither_a_handle_nor_an_axis_name(fusion, call, mcp):
+    profile = _square_profile(call, mcp)
+    response = call("revolve", profile=profile, axis="diagonal")
+
+    assert mcp.error_kind(response) == "invalid_value"
+    assert "entity must be a stored selection handle" in mcp.error(response)
+
+
+def test_revolve_rejects_an_axis_handle_that_is_not_in_the_store(fusion, call, mcp):
+    profile = _square_profile(call, mcp)
+    response = call("revolve", profile=profile, axis="$selection_99")
+
+    assert mcp.error_kind(response) == "invalid_value"
+    assert "not found" in mcp.error(response)
+
+
+def test_revolve_needs_an_active_design(fusion_empty, call, mcp):
+    assert mcp.error_kind(call("revolve", profile="$profile_0", axis="y")) == "no_active_document"
+
+
+# ── Component ──────────────────────────────────────────────────────────────────
+
+
+def test_create_component_names_a_new_component_in_the_assembly(fusion, call, mcp):
+    payload = mcp.ok(call("create_component", name="Bracket"))
+
+    assert payload["name"] == "Bracket"
+    assert payload["component"].startswith("$component_")
+    assert payload["occurrence"].startswith("$occurrence_")
+
+    # The component is reached through the occurrence the API created it from.
+    assert fusion.root.occurrences.count == 1
+    assert fusion.root.occurrences.item(0).component.name == "Bracket"
+
+
+def test_create_component_rejects_an_unnamed_component(fusion, call, mcp):
+    assert "missing required argument" in mcp.error(call("create_component", name=""))
+    response = call("create_component", name="   ")
+
+    assert mcp.error_kind(response) == "invalid_value"
+    assert "name must be a non-empty string" in mcp.error(response)
+
+
+def test_create_component_needs_an_active_design(fusion_empty, call, mcp):
+    assert mcp.error_kind(call("create_component", name="Bracket")) == "no_active_document"
+
+
+# ── Body primitives ────────────────────────────────────────────────────────────
+
+
+def test_create_body_adds_a_named_box_to_the_root_component(fusion, call, mcp):
+    payload = mcp.ok(
+        call("create_body", shape="box", dimensions={"length": 2.0, "width": 3.0, "height": 4.0}, name="Housing")
+    )
+
+    assert payload["shape"] == "box"
+    assert payload["name"] == "Housing"
+    assert payload["is_solid"] is True
+    assert payload["body"].startswith("$body_")
+
+    body = fusion.root.bodies.item(0)
+    assert body.name == "Housing"
+    assert body.isSolid is True
+    # A parametric design wraps the primitive in a base feature's edit cycle.
+    assert _last_feature(fusion).name.startswith("BaseFeature")
+
+
+def test_create_body_builds_a_cylinder(fusion, call, mcp):
+    payload = mcp.ok(call("create_body", shape="cylinder", dimensions={"radius": 1.0, "height": 5.0}))
+
+    assert payload["shape"] == "cylinder"
+    assert payload["is_solid"] is True
+    assert fusion.root.bodies.count == 1
+
+
+def test_create_body_builds_a_sphere(fusion, call, mcp):
+    payload = mcp.ok(call("create_body", shape="sphere", dimensions={"radius": 2.0}))
+
+    assert payload["shape"] == "sphere"
+    assert payload["is_solid"] is True
+    assert fusion.root.bodies.count == 1
+
+
+def test_create_body_adds_directly_in_a_direct_design(fusion, call, mcp):
+    # A direct design has no timeline edit cycle to wrap the primitive in.
+    fusion.design.designType = values.DesignTypes.DirectDesignType
+
+    payload = mcp.ok(call("create_body", shape="box", dimensions={"length": 1.0, "width": 1.0, "height": 1.0}))
+
+    assert payload["shape"] == "box"
+    assert payload["is_solid"] is True
+    assert fusion.root.bodies.count == 1
+    assert fusion.root.features.count == 0
+
+
+def test_create_body_requires_shape_and_dimensions(fusion, call, mcp):
+    assert "missing required argument" in mcp.error(call("create_body", dimensions={"radius": 1.0}))
+    assert "missing required argument" in mcp.error(call("create_body", shape="sphere"))
+
+
+def test_create_body_rejects_an_unknown_shape(fusion, call, mcp):
+    response = call("create_body", shape="pyramid", dimensions={"length": 1.0, "width": 1.0, "height": 1.0})
+
+    assert mcp.error_kind(response) == "invalid_value"
+    assert "shape must be 'box', 'cylinder', or 'sphere'" in mcp.error(response)
+
+
+def test_create_body_rejects_non_positive_dimensions(fusion, call, mcp):
+    zero_height = call("create_body", shape="box", dimensions={"length": 1.0, "width": 1.0, "height": 0})
+    assert mcp.error_kind(zero_height) == "invalid_value"
+    assert "height must be greater than zero" in mcp.error(zero_height)
+
+    negative_radius = call("create_body", shape="sphere", dimensions={"radius": -1.0})
+    assert "radius must be greater than zero" in mcp.error(negative_radius)
+
+
+def test_create_body_requires_every_dimension_the_shape_needs(fusion, call, mcp):
+    # An empty dimensions object is the caller forgetting, not a bad value.
+    assert mcp.error_kind(call("create_body", shape="sphere", dimensions={})) == "missing_argument"
+
+    # A sphere given the wrong dimension has no radius to build from.
+    response = call("create_body", shape="sphere", dimensions={"height": 1.0})
+    assert mcp.error_kind(response) == "invalid_value"
+    assert "radius must be a number" in mcp.error(response)
+
+
+def test_create_body_needs_an_active_design(fusion_empty, call, mcp):
+    response = call("create_body", shape="box", dimensions={"length": 1.0, "width": 1.0, "height": 1.0})
+    assert mcp.error_kind(response) == "no_active_document"
+
+
+# ── Appearance ─────────────────────────────────────────────────────────────────
+
+
+def test_apply_appearance_assigns_a_library_appearance_to_a_body(fusion, call, mcp):
+    body = mcp.ok(call("create_body", shape="box", dimensions={"length": 2.0, "width": 2.0, "height": 2.0}))["body"]
+
+    payload = mcp.ok(call("apply_appearance", body=body, appearance="Steel"))
+
+    assert payload["body"] == body
+    assert payload["appearance"] == "Steel"
+    assert payload["library"] == "Fusion 360 Material Library"
+    assert payload["appearance_name"] == "Steel"
+
+    # The appearance was copied into the design and assigned to the body itself.
+    assert fusion.design.appearances.itemByName("Steel") is not None
+    assert fusion.root.bodies.item(0).appearance.name == "Steel"
+
+
+def test_apply_appearance_reads_an_explicit_library(fusion, call, mcp):
+    fusion.app.materialLibraries = FakeMaterialLibraries(
+        [
+            FakeMaterialLibrary("Fusion 360 Material Library", ("Steel",)),
+            FakeMaterialLibrary("Finishes", ("Powder Coat",)),
+        ]
+    )
+    body = mcp.ok(call("create_body", shape="sphere", dimensions={"radius": 1.0}))["body"]
+
+    payload = mcp.ok(call("apply_appearance", body=body, appearance="Powder Coat", library="Finishes"))
+
+    assert payload["library"] == "Finishes"
+    assert payload["appearance"] == "Powder Coat"
+    assert payload["appearance_name"] == "Powder Coat"
+
+
+def test_apply_appearance_reports_an_unknown_library(fusion, call, mcp):
+    body = mcp.ok(call("create_body", shape="box", dimensions={"length": 1.0, "width": 1.0, "height": 1.0}))["body"]
+    response = call("apply_appearance", body=body, appearance="Steel", library="Nope")
+
+    assert mcp.error_kind(response) == "not_found"
+    assert "No material library named" in mcp.error(response)
+
+
+def test_apply_appearance_reports_an_unknown_appearance(fusion, call, mcp):
+    body = mcp.ok(call("create_body", shape="box", dimensions={"length": 1.0, "width": 1.0, "height": 1.0}))["body"]
+    response = call("apply_appearance", body=body, appearance="Unobtanium")
+
+    assert mcp.error_kind(response) == "not_found"
+    assert "No appearance named" in mcp.error(response)
+
+
+def test_apply_appearance_rejects_an_empty_appearance_name(fusion, call, mcp):
+    body = mcp.ok(call("create_body", shape="box", dimensions={"length": 1.0, "width": 1.0, "height": 1.0}))["body"]
+
+    assert "missing required argument" in mcp.error(call("apply_appearance", body=body, appearance=""))
+    response = call("apply_appearance", body=body, appearance="   ")
+
+    assert mcp.error_kind(response) == "invalid_value"
+    assert "appearance must be a non-empty appearance name" in mcp.error(response)
+
+
+def test_apply_appearance_needs_an_active_design(fusion_empty, call, mcp):
+    assert mcp.error_kind(call("apply_appearance", body="$body_0", appearance="Steel")) == "no_active_document"

@@ -77,8 +77,8 @@ export const ADVERTISED_TOOLS: Tool[] = [
     inputSchema: { type: "object", properties: {} },
   },
   {
-    name: "create_sketch",
-    description: "Wave-3 tool, not yet enabled.",
+    name: "apply_material",
+    description: "Retired name; superseded by apply_appearance.",
     inputSchema: { type: "object", properties: {} },
   },
 ];

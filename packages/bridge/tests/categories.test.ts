@@ -30,7 +30,7 @@ it("list_tool_categories is itself part of the live surface", () => {
 it("reports the whole live surface exactly once", () => {
   const report = listToolCategories();
 
-  expect(report.total_tools).toBe(26);
+  expect(report.total_tools).toBe(32);
   expect(report.total_tools).toBe(ALLOWED.size);
 
   const tools = listedTools(report);
@@ -60,13 +60,13 @@ it("classifies every live tool inside that closed set", () => {
   }
 });
 
-it("never surfaces PENDING Wave-3 CAD tools in any category", () => {
+it("keeps the PENDING roadmap empty now that the Wave-3b CAD surface is live", () => {
   const tools = listedTools(listToolCategories());
 
-  // The closed PENDING list, spelled out so a renamed entry fails loudly.
-  expect(PENDING).toEqual(
-    ["apply_material", "create_body", "create_component", "create_sketch", "extrude", "revolve"].sort(),
-  );
+  // The Wave-3b tools are promoted into ALLOWED, so nothing sits in PENDING.
+  // The list is kept as the promotion slot for the next wave; anything still in
+  // it must stay unlisted and unclassified.
+  expect(PENDING).toEqual([]);
   for (const name of PENDING) {
     expect(ALLOWED.has(name)).toBe(false);
     expect(tools).not.toContain(name);

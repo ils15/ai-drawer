@@ -52,6 +52,9 @@ class FakeSketchCurve:
 class FakeSketchCurves:
     def __init__(self):
         self._items: list[FakeSketchCurve] = []
+        self.sketchLines = FakeSketchLines(self)
+        self.sketchCircles = FakeSketchCircles(self)
+        self.sketchArcs = FakeSketchArcs(self)
 
     @property
     def count(self):
@@ -85,6 +88,64 @@ class FakeSketchCurves:
 
     def __iter__(self):
         return iter(self._items)
+
+
+class FakeSketchLines:
+    """``SketchCurves.sketchLines``: ``addByTwoPoints`` accepts Point3D or sketch points."""
+
+    def __init__(self, curves: FakeSketchCurves):
+        self._curves = curves
+
+    def addByTwoPoints(self, start, end):
+        return self._curves.addLine(_as_point3d(start), _as_point3d(end))
+
+
+class FakeSketchCircles:
+    """``SketchCurves.sketchCircles``: centre and radius in centimetres."""
+
+    def __init__(self, curves: FakeSketchCurves):
+        self._curves = curves
+
+    def addByCenterRadius(self, center, radius):
+        return self._curves.addCircle(_as_point3d(center), radius)
+
+
+class FakeSketchArcs:
+    """``SketchCurves.sketchArcs``: ``addByCenterStartSweep(center, start, sweep)``.
+
+    The sweep is in *radians*, positive counter-clockwise, exactly as the real
+    API takes it.  The end point is computed from the centre, the start point,
+    and the sweep so the endpoint-chaining closure detector sees a real
+    endpoint rather than a recorded intention -- an arc that closes a chain
+    must close it geometrically, or an extrude test built on it is worthless.
+    """
+
+    def __init__(self, curves: FakeSketchCurves):
+        self._curves = curves
+
+    def addByCenterStartSweep(self, center, start, sweep):
+        center = _as_point3d(center)
+        start = _as_point3d(start)
+        return self._curves.addArc(start, _rotate_about_center(center, start, float(sweep)))
+
+
+def _as_point3d(value):
+    """Accept a Point3D or a sketch point (whose ``.geometry`` is the point)."""
+    geometry = getattr(value, "geometry", None)
+    if geometry is not None:
+        return geometry
+    return value
+
+
+def _rotate_about_center(center, start, sweep_radians):
+    """Rotate ``start`` about ``center`` in the sketch plane, CCW for a positive sweep."""
+    dx, dy = start.x - center.x, start.y - center.y
+    cosine, sine = math.cos(sweep_radians), math.sin(sweep_radians)
+    return Point3D.create(
+        center.x + dx * cosine - dy * sine,
+        center.y + dx * sine + dy * cosine,
+        center.z,
+    )
 
 
 class FakeSketchPoints:
@@ -161,8 +222,9 @@ class FakeBoundingBox:
 
 
 class FakeSketch:
-    def __init__(self, name="Sketch1"):
+    def __init__(self, name="Sketch1", plane=None):
         self.name = name
+        self.plane = plane
         self.isVisible = True
         self.sketchCurves = FakeSketchCurves()
         self.sketchPoints = FakeSketchPoints()
@@ -170,9 +232,7 @@ class FakeSketch:
 
     def add_line(self, x1, y1, x2, y2, z=0.0):
         """Test helper: add a line from two coordinate pairs."""
-        return self.sketchCurves.addLine(
-            Point3D.create(x1, y1, z), Point3D.create(x2, y2, z)
-        )
+        return self.sketchCurves.addLine(Point3D.create(x1, y1, z), Point3D.create(x2, y2, z))
 
     def add_circle(self, cx, cy, radius, z=0.0):
         """Test helper: add a circle from center and radius."""
@@ -190,8 +250,9 @@ class FakeSketches:
     def item(self, index):
         return self._items[index] if 0 <= index < len(self._items) else None
 
-    def add(self, name="Sketch1"):
-        sketch = FakeSketch(name)
+    def add(self, plane=None, name=None):
+        """Add a sketch on a construction plane, auto-naming as the API does."""
+        sketch = FakeSketch(name or f"Sketch{len(self._items) + 1}", plane=plane)
         self._items.append(sketch)
         return sketch
 
@@ -247,9 +308,7 @@ def find_closed_profiles(curves) -> list[FakeProfile]:
         by_root.setdefault(_find_index(parent, index), []).append(curve)
 
     open_roots = {
-        _find_index(parent, first_curve_at_vertex[vertex_index])
-        for vertex_index, deg in degree.items()
-        if deg != 2
+        _find_index(parent, first_curve_at_vertex[vertex_index]) for vertex_index, deg in degree.items() if deg != 2
     }
 
     return [FakeProfile(group) for root, group in by_root.items() if root not in open_roots]

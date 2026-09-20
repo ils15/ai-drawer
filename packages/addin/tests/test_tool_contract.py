@@ -39,6 +39,12 @@ class ToolSurfaceTests(unittest.TestCase):
         "hole",
         "rectangular_pattern",
         "circular_pattern",
+        "create_sketch",
+        "extrude",
+        "revolve",
+        "create_component",
+        "create_body",
+        "apply_appearance",
     }
 
     def test_all_expected_tools_present(self):

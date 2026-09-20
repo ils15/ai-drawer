@@ -19,9 +19,15 @@ from __future__ import annotations
 import pathlib
 import sys
 
-from . import values
+from . import features, geometry, values
 from .application import ApplicationClass
-from .design import FakeDesign
+from .design import (
+    FakeConstructionAxis,
+    FakeConstructionPlane,
+    FakeDesign,
+    FakeOccurrence,
+    FakeOccurrences,
+)
 from .factory import FakeFusion, make_fusion
 from .features import (
     FakeChamferFeatures,
@@ -49,10 +55,15 @@ _CORE_ATTRIBUTES = {
     "Point3D": values.Point3D,
     "Vector3D": values.Vector3D,
     "Point2D": values.Point2D,
+    "BoundingBox3D": values.BoundingBox3D,
     "DocumentTypes": values.DocumentTypes,
     "ViewOrientations": values.ViewOrientations,
     "CameraTypes": values.CameraTypes,
     "SaveImageFileOptions": values.SaveImageFileOptions,
+    "MaterialLibraries": features.FakeMaterialLibraries,
+    "MaterialLibrary": features.FakeMaterialLibrary,
+    "Appearances": features.FakeAppearances,
+    "Appearance": features.FakeAppearance,
 }
 
 _FUSION_ATTRIBUTES = {
@@ -60,10 +71,17 @@ _FUSION_ATTRIBUTES = {
     "DesignTypes": values.DesignTypes,
     "DistanceUnits": values.DistanceUnits,
     "MeshRefinementSettings": values.MeshRefinementSettings,
+    "FeatureOperations": values.FeatureOperations,
     # The feature tools read these enumerations directly (adsk.fusion.ExtentDirections.*),
     # so they must exist on the installed fake just as on the real module.
     "ExtentDirections": values.ExtentDirections,
     "PatternDistanceType": values.PatternDistanceType,
+    # Extent definitions are constructed by static create() calls.
+    "DistanceExtentDefinition": features.FakeDistanceExtentDefinition,
+    "ThroughAllExtentDefinition": features.FakeThroughAllExtentDefinition,
+    # Transient solid primitives, reached through TemporaryBRepManager.get().
+    "TemporaryBRepManager": features.FakeTemporaryBRepManager,
+    "TemporaryBRepBody": features.FakeTemporaryBRepBody,
     # Feature collection classes are reached through Component.features, but
     # pinning them here keeps the class-level surface honest for the pin check.
     "FilletFeatures": FakeFilletFeatures,
@@ -71,6 +89,22 @@ _FUSION_ATTRIBUTES = {
     "HoleFeatures": FakeHoleFeatures,
     "RectangularPatternFeatures": FakeRectangularPatternFeatures,
     "CircularPatternFeatures": FakeCircularPatternFeatures,
+    "ExtrudeFeatures": features.FakeExtrudeFeatures,
+    "RevolveFeatures": features.FakeRevolveFeatures,
+    "BaseFeatures": features.FakeBaseFeatures,
+    "ExtrudeFeatureInput": features.FakeExtrudeFeatureInput,
+    "RevolveFeatureInput": features.FakeRevolveFeatureInput,
+    "ConstructionPlane": FakeConstructionPlane,
+    "ConstructionAxis": FakeConstructionAxis,
+    "Occurrences": FakeOccurrences,
+    "Occurrence": FakeOccurrence,
+    "ExtrudeFeature": features.FakeBuiltFeature,
+    "RevolveFeature": features.FakeBuiltFeature,
+    "BaseFeature": features.FakeBaseFeature,
+    "SketchCurves": geometry.FakeSketchCurves,
+    "SketchLines": geometry.FakeSketchLines,
+    "SketchCircles": geometry.FakeSketchCircles,
+    "SketchArcs": geometry.FakeSketchArcs,
 }
 
 

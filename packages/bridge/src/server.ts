@@ -96,6 +96,83 @@ const pointSchema = z
   })
   .describe("A 3D position or direction vector; x, y, and z are in centimeters.");
 
+/**
+ * One sketch curve, discriminated by 'kind'. The add-in's owned validator has no
+ * `oneOf` branch, so the three variants share a single object schema there too:
+ * only 'kind' is required, and the handler enforces which members each variant
+ * needs (a line needs start and end, a circle center and radius, an arc center,
+ * start, and sweep). The bridge mirrors that flattened shape exactly — no zod
+ * discriminatedUnion — and forwards raw arguments for the add-in to validate per
+ * variant, so the gate never rejects a curve the add-in would accept.
+ */
+const curveSchema = z
+  .strictObject({
+    kind: z.enum(["line", "circle", "arc"]).describe("Which curve this is, and which members are required."),
+    start: pointSchema.optional(),
+    end: pointSchema.optional(),
+    center: pointSchema.optional(),
+    radius: z
+      .number()
+      .min(1e-9)
+      .max(1e12)
+      .optional()
+      .describe("Circle radius in centimetres.")
+      .meta({ examples: [1] }),
+    sweep: z
+      .number()
+      .min(-360)
+      .max(360)
+      .optional()
+      .describe("Arc sweep in degrees; positive is counter-clockwise.")
+      .meta({ examples: [90] }),
+  })
+  .describe(
+    "One sketch curve: a line, a circle, or an arc, told apart by 'kind'. Points are in centimetres; " +
+      "a line needs start and end, a circle needs center and radius, and an arc needs center, start, and sweep degrees.",
+  );
+
+/**
+ * Primitive body dimensions, flattened the same way curveSchema is: the add-in's
+ * validator has no `oneOf`, so no member is required here and the handler
+ * enforces which ones each shape needs (box length/width/height, cylinder
+ * radius/height, sphere radius).
+ */
+const dimensionsSchema = z
+  .strictObject({
+    length: z
+      .number()
+      .min(1e-9)
+      .max(1e12)
+      .optional()
+      .describe("Box length along the x axis in centimetres.")
+      .meta({ examples: [2] }),
+    width: z
+      .number()
+      .min(1e-9)
+      .max(1e12)
+      .optional()
+      .describe("Box width along the y axis in centimetres.")
+      .meta({ examples: [2] }),
+    height: z
+      .number()
+      .min(1e-9)
+      .max(1e12)
+      .optional()
+      .describe("Box or cylinder height along the z axis in centimetres.")
+      .meta({ examples: [3] }),
+    radius: z
+      .number()
+      .min(1e-9)
+      .max(1e12)
+      .optional()
+      .describe("Cylinder or sphere radius in centimetres.")
+      .meta({ examples: [1] }),
+  })
+  .describe(
+    "Body dimensions in centimetres; which members are required depends on the shape: box needs length, " +
+      "width, and height; cylinder needs radius and height; sphere needs radius alone.",
+  );
+
 export const TOOL_ARGS: Readonly<Record<string, z.ZodType>> = {
   capture_viewport: z
     .object({
@@ -631,6 +708,150 @@ export const TOOL_ARGS: Readonly<Record<string, z.ZodType>> = {
         "Entities are addressed by stored selection handle and must all be the same kind. " +
         "The axis is a linear edge, construction axis, or cylindrical face handle; " +
         "the angle defaults to a full circle.",
+    ),
+  create_sketch: z
+    .strictObject({
+      plane: z
+        .enum(["xy", "xz", "yz"])
+        .describe("Base construction plane the sketch lies on.")
+        .meta({ examples: ["xy"] }),
+      curves: z
+        .array(curveSchema)
+        .describe(
+          "Curves to draw, in centimetres. Endpoints that coincide chain into closed profiles, " +
+            "so the order of curves does not matter.",
+        )
+        .meta({
+          examples: [
+            [
+              { kind: "line", start: { x: 0, y: 0, z: 0 }, end: { x: 2, y: 0, z: 0 } },
+              { kind: "line", start: { x: 2, y: 0, z: 0 }, end: { x: 2, y: 2, z: 0 } },
+              { kind: "line", start: { x: 2, y: 2, z: 0 }, end: { x: 0, y: 2, z: 0 } },
+              { kind: "line", start: { x: 0, y: 2, z: 0 }, end: { x: 0, y: 0, z: 0 } },
+            ],
+          ],
+        }),
+    })
+    .describe(
+      "Draw one or more curves on a base construction plane (xy, xz, or yz) of the root component. " +
+        "Each curve is a line between two points, a circle about a centre and radius, or an arc about a " +
+        "centre from a start point through a sweep; all coordinates and radii are in centimetres and arc " +
+        "sweeps are in degrees (counter-clockwise positive). Returns the sketch handle plus one handle per " +
+        "closed profile Fusion derived from the curves ($profile_0, ...); profiles are populated " +
+        "automatically, and an open curve chain yields none. Give a profile handle to extrude or revolve " +
+        "to make solid geometry.",
+    ),
+  extrude: z
+    .strictObject({
+      profile: z
+        .string()
+        .describe("Handle of the closed profile to sweep, from create_sketch.")
+        .meta({ examples: ["$profile_0"] }),
+      operation: z
+        .enum(["new_body", "join", "cut", "intersect"])
+        .optional()
+        .describe("How the extruded geometry combines with existing bodies (default: new_body)."),
+      extent: z
+        .enum(["distance", "through_all", "symmetric"])
+        .optional()
+        .describe("Extrude extent: distance, through all geometry, or symmetric (default: distance)."),
+      distance: z
+        .string()
+        .optional()
+        .describe(
+          "Extrude distance as a Fusion expression; a bare number is centimetres. Required for extent " +
+            "distance and symmetric.",
+        )
+        .meta({ examples: ["10 mm", 2.5] }),
+      direction: z
+        .enum(["positive", "negative"])
+        .optional()
+        .describe("Which way a one-sided extent runs off the profile (default: positive)."),
+    })
+    .describe(
+      "Sweep a closed profile into a solid body. The profile is a handle returned by create_sketch " +
+        "($profile_0). operation controls how the new geometry combines with existing bodies (new_body by " +
+        "default). extent is a fixed distance (needs the distance argument), through_all, or a symmetric " +
+        "sweep about the profile plane (also needs distance); direction applies to the one-sided extents. " +
+        "The created body is returned as a handle for appearance or selection tools.",
+    ),
+  revolve: z
+    .strictObject({
+      profile: z
+        .string()
+        .describe("Handle of the closed profile to revolve, from create_sketch.")
+        .meta({ examples: ["$profile_0"] }),
+      axis: z
+        .string()
+        .describe("Stored entity handle of the axis, or x, y, or z for a construction axis.")
+        .meta({ examples: ["$selection_0", "y"] }),
+      operation: z
+        .enum(["new_body", "join", "cut", "intersect"])
+        .optional()
+        .describe("How the revolved geometry combines with existing bodies (default: new_body)."),
+      angle: z
+        .string()
+        .optional()
+        .describe("Total sweep as a Fusion angle expression; a bare number is degrees (default: full circle).")
+        .meta({ examples: ["360 deg", "180 deg"] }),
+    })
+    .describe(
+      "Sweep a closed profile about an axis through an angle to make a solid body. The profile is a handle " +
+        "from create_sketch; the axis is a stored entity handle or one of the strings x, y, or z for the " +
+        "root component's construction axes. The angle is a Fusion angle expression and defaults to a full " +
+        "360-degree turn. operation controls how the new geometry combines with existing bodies.",
+    ),
+  create_component: z
+    .strictObject({
+      name: z
+        .string()
+        .describe("Name of the new component; must be unique enough for the caller to find later.")
+        .meta({ examples: ["Bracket"] }),
+    })
+    .describe(
+      "Add a new component to the root component's assembly and name it. The component is created by " +
+        "adding an occurrence with an identity transform, then naming the component that occurrence owns; " +
+        "the returned component handle identifies it for later selection.",
+    ),
+  create_body: z
+    .strictObject({
+      shape: z
+        .enum(["box", "cylinder", "sphere"])
+        .describe("Primitive shape to build.")
+        .meta({ examples: ["box"] }),
+      dimensions: dimensionsSchema,
+      name: z
+        .string()
+        .optional()
+        .describe("Optional body name; Fusion assigns one when omitted.")
+        .meta({ examples: ["Housing"] }),
+    })
+    .describe(
+      "Add a primitive box, cylinder, or sphere body to the root component. Dimensions are in centimetres: " +
+        "a box needs length, width, and height; a cylinder needs radius and height; a sphere needs radius. " +
+        "A parametric design wraps the body in a base feature on the timeline, a direct design adds it " +
+        "directly. The returned body handle can be given to apply_appearance.",
+    ),
+  apply_appearance: z
+    .strictObject({
+      body: z
+        .string()
+        .describe("Stored handle of the body to recolour.")
+        .meta({ examples: ["$body_0"] }),
+      appearance: z
+        .string()
+        .describe("Name of the appearance in the library.")
+        .meta({ examples: ["Steel", "Aluminum"] }),
+      library: z
+        .string()
+        .optional()
+        .describe("Material library for the appearance (default: Fusion 360 Material Library).")
+        .meta({ examples: ["Fusion 360 Material Library"] }),
+    })
+    .describe(
+      "Assign an appearance from a material library to a body. The body is a stored handle (from " +
+        "create_body, extrude, or a selection); the appearance is named from the library, which defaults to " +
+        "the Fusion 360 Material Library. The appearance is copied into the design and assigned to the body.",
     ),
   list_tool_categories: z.object({}).describe("List the available tools grouped by category; takes no arguments."),
 };

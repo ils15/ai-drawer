@@ -141,6 +141,9 @@ class FakeApplication:
         self.version = "2.0.0-fake"
         self.activeDocument = None
         self.logs: list[str] = []
+        # Installed material/appearance libraries; the factory seeds the
+        # standard one so apply_appearance has something honest to read.
+        self.materialLibraries = None
         # Documents become active the moment they are created or opened; the
         # collection drives that through this hook.
         documents._set_activate(self._activate)

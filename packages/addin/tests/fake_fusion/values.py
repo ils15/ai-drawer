@@ -65,6 +65,16 @@ ExtentDirections = _enum(
     NegativeExtentDirection=1,
     SymmetricExtentDirection=2,
 )
+# How a feature's new geometry combines with the existing bodies; the published
+# enumerator order (see fusion_FeatureOperations) is NewBody, Join, Cut,
+# Intersect, NewComponent.
+FeatureOperations = _enum(
+    NewBodyFeatureOperation=0,
+    JoinFeatureOperation=1,
+    CutFeatureOperation=2,
+    IntersectFeatureOperation=3,
+    NewComponentFeatureOperation=4,
+)
 
 
 # ── Event plumbing ───────────────────────────────────────────────────────────
@@ -148,6 +158,18 @@ class Matrix3D:
 
     def __init__(self):
         self._data = [[1.0 if i == j else 0.0 for j in range(4)] for i in range(4)]
+
+
+class BoundingBox3D:
+    """``adsk.core.BoundingBox3D``: an axis-aligned span between two points."""
+
+    @staticmethod
+    def create(min_point, max_point):
+        return BoundingBox3D(min_point, max_point)
+
+    def __init__(self, min_point, max_point):
+        self.minPoint = min_point
+        self.maxPoint = max_point
 
 
 class ObjectCollection:

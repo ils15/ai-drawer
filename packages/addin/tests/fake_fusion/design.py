@@ -10,7 +10,11 @@ import re
 
 from . import values
 from .failures import FailureInjector
-from .features import FakeBRepBodies, FakeFeatures
+from .features import (
+    FakeAppearances,
+    FakeBRepBodies,
+    FakeFeatures,
+)
 from .geometry import FakeSketches
 
 # ── Expression evaluation ────────────────────────────────────────────────────
@@ -279,12 +283,39 @@ class FakeComponent:
         # against the design's parameters, so they need the design itself.
         self.features = FakeFeatures(design.timeline if design else FakeTimeline(), design=design)
         self.bodies = FakeBRepBodies()
-        self.occurrences = FakeOccurrences()
+        self.occurrences = FakeOccurrences(design)
+        # The three base construction planes and axes, named as the API
+        # publishes them: the plane spanning the two axes it is named for.
+        self.xYConstructionPlane = FakeConstructionPlane("XY Plane")
+        self.yZConstructionPlane = FakeConstructionPlane("YZ Plane")
+        self.zXConstructionPlane = FakeConstructionPlane("ZX Plane")
+        self.xConstructionAxis = FakeConstructionAxis("X Axis")
+        self.yConstructionAxis = FakeConstructionAxis("Y Axis")
+        self.zConstructionAxis = FakeConstructionAxis("Z Axis")
+
+
+class FakeConstructionPlane:
+    def __init__(self, name):
+        self.name = name
+
+    @property
+    def objectType(self):
+        return "adsk.fusion.ConstructionPlane"
+
+
+class FakeConstructionAxis:
+    def __init__(self, name):
+        self.name = name
+
+    @property
+    def objectType(self):
+        return "adsk.fusion.ConstructionAxis"
 
 
 class FakeOccurrences:
-    def __init__(self):
-        self._items: list = []
+    def __init__(self, design=None):
+        self._design = design
+        self._items: list[FakeOccurrence] = []
 
     @property
     def count(self):
@@ -295,6 +326,19 @@ class FakeOccurrences:
 
     def add(self, component, name="Occurrence1"):
         occurrence = FakeOccurrence(component, name)
+        self._items.append(occurrence)
+        return occurrence
+
+    def addNewComponent(self, transform):
+        """Create a component owned by a new occurrence (the API's only path).
+
+        ``transform`` is applied to the occurrence, not the component; the
+        component itself is a fresh, empty one the caller then names.
+        """
+        del transform
+        design = self._design
+        component = FakeComponent(f"Component{len(self._items) + 1}", design=design)
+        occurrence = FakeOccurrence(component, f"Occurrence{len(self._items) + 1}")
         self._items.append(occurrence)
         return occurrence
 
@@ -328,6 +372,8 @@ class FakeDesign:
         self.userParameters = FakeUserParameters(self)
         self.modelParameters = FakeModelParameters(self)
         self.exportManager = FakeExportManager(self)
+        # Appearances copied into the design, as apply_appearance does.
+        self.appearances = FakeAppearances()
         self._dirty = False
         self.recomputedFeatureCount = None
 
