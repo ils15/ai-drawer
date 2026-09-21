@@ -41,10 +41,8 @@ with no arbitrary code execution anywhere in it.
   launches, talking Streamable HTTP to the add-in inside Fusion; every `adsk.*`
   call is dispatched onto the Fusion main thread.
 - **Test suite.** 394 pytest tests pass on the add-in side with the Fusion API
-  mocked, and 122 bridge tests pass. The cross-package drift guard pins the two
-  sides of the surface together so they cannot drift silently — it is the one
-  suite member still red on this cut, because the bridge-side mirror of the new
-  inspection category has not been regenerated yet. That lands before tagging.
+  mocked, and 130 bridge tests pass. The cross-package drift guard pins the two
+  sides of the surface together so they cannot drift silently.
 - **Skills integration.** The `ai-drawer` skill gives the LLM the operating
   manual for the surface above.
 
