@@ -91,6 +91,13 @@ Two forms are accepted, and the distinction is per-argument:
 Not every argument accepts both; the tool's own schema says which. When in doubt,
 pass a string with an explicit unit — `"5 mm"` is unambiguous, `5` is not.
 
+**This is the mistake that distorted a real model on the first field run.** The
+user passed a bare `92` intending millimetres; the surface read it as internal
+centimetres, so the part came out at 92 cm — an order of magnitude wrong, and
+silent until the geometry was inspected. The rule: **pass an expression string
+with an explicit unit for every dimension a human reads** (`"92 mm"`, `"5 mm"`).
+Use bare numbers only when you genuinely mean internal centimetres.
+
 Inspection results come back in the same system: distances and volumes in
 centimetres, angles in radians. Convert before quoting a number to the user.
 
@@ -109,6 +116,33 @@ So when a mutation fails:
   else.
 
 Verification is cheap and retries are free; mutations are neither.
+
+## Rule 4 — plane orientation
+
+Fusion's base sketch planes have fixed normals, and the mapping is not
+negotiable: **XY has normal Z, XZ has normal Y, YZ has normal X.** When you
+sketch on XZ or YZ, the sketch's vertical maps to a world axis different from
+the one you may intuit — and the direction can be the opposite of what you
+assumed.
+
+This is not a theoretical concern. In the field, reinforcing geometry sketched on
+XZ went the wrong way: it built downward instead of upward, left the intended
+reference, and produced **disconnected bodies**. That is a silent and expensive
+failure — nothing errors out, and it only surfaces later when the model does not
+come together.
+
+The discipline:
+
+- **Confirm the orientation before committing geometry.** Call `get_viewport`
+  first — it is cheap, reports the camera — including its `up_vector` — and
+  grounds your mental model of which way is up on the plane you are about to use.
+- **Prefer sketching on XY and placing geometry by its coordinates** rather than
+  reasoning about a rotated plane. XY's normal is world Z, which matches the
+  intuition you build on paper; anything you want on another face can be reached
+  by offsetting or extruding in a stated direction.
+- **If a body lands disconnected or on the wrong side, suspect the plane before
+  you suspect the dimensions.** A unit error (Rule 2) scales a part; a plane
+  error puts it somewhere else entirely.
 
 ## Documents and models
 
@@ -163,4 +197,5 @@ configured.
 | Make geometry | `create_sketch`, `extrude`, `revolve`, `create_body`, `create_component` |
 | Detail and repeat | `fillet`, `chamfer`, `hole`, `rectangular_pattern`, `circular_pattern`, `apply_appearance` |
 | See it | `capture_viewport` |
+| Which way is up? | `get_viewport` before sketching on XZ/YZ |
 | Look something up | `fetch_api_documentation`, `fetch_online_documentation`, `fetch_design_guide` |

@@ -663,6 +663,34 @@ def revolve(arguments):
 # ── Structure and body primitives ────────────────────────────────────────────
 
 
+def _check_assembly_shaped(root):
+    """Return an error envelope if the design looks like a part, or None to proceed.
+
+    ``occurrences.addNewComponent`` fails opaquely when the active document is a
+    part rather than an assembly, and that failure degrades to a generic
+    ``internal`` error with no kind and no hint.  There is no stable public API
+    for the part-vs-assembly distinction -- ``designType`` is parametric-vs-direct
+    and ``designIntent`` is a preview API the reference forbids shipping -- so
+    this uses the root-component heuristic Autodesk's API expert publishes: a
+    document whose root component holds bodies but no occurrences is a part.
+
+    The ambiguous cases (an empty document, occurrences already present, or a
+    hybrid with both) are allowed through; a false block is worse than letting
+    the API decide.
+    """
+    occurrences = safe_get(root, "occurrences")
+    bodies = safe_get(root, "bodies")
+    if safe_get(occurrences, "count", 0) == 0 and safe_get(bodies, "count", 0) > 0:
+        return structured_error(
+            "unsupported_operation",
+            "This document looks like a part, not an assembly: its root component holds "
+            "bodies but no occurrences, so a new component cannot be added here.",
+            "Work in the root component and create bodies there, or create or open an "
+            "assembly document first, then retry.",
+        )
+    return None
+
+
 @map_tool_errors
 def create_component(arguments):
     """Add a new component to the root component's assembly.
@@ -684,6 +712,9 @@ def create_component(arguments):
             "unsupported_operation",
             "This Fusion build cannot add a component through occurrences",
         )
+    part_error = _check_assembly_shaped(root)
+    if part_error is not None:
+        return part_error
     occurrence = occurrences.addNewComponent(adsk.core.Matrix3D.create())
     if occurrence is None:
         return _refused("component")

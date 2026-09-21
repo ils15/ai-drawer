@@ -17,6 +17,7 @@ cannot compute.
 
 import _fusion_test_bootstrap  # noqa: F401  (installs adsk mock + parent pkg shim)
 from fake_fusion import values
+from fake_fusion.design import FakeComponent
 from fake_fusion.features import FakeMaterialLibraries, FakeMaterialLibrary
 
 
@@ -867,6 +868,46 @@ def test_create_component_rejects_an_unnamed_component(fusion, call, mcp):
 
 def test_create_component_needs_an_active_design(fusion_empty, call, mcp):
     assert mcp.error_kind(call("create_component", name="Bracket")) == "no_active_document"
+
+
+def _must_not_be_called(*args, **kwargs):
+    raise AssertionError("create_component must not reach the addNewComponent API for a part document")
+
+
+def test_create_component_refuses_a_part_shaped_document_before_the_api_is_called(fusion, call, mcp, monkeypatch):
+    # Zero occurrences with real geometry in the root: this looks like a part
+    # document, where addNewComponent fails opaquely in real Fusion.
+    fusion.new_document("Bracket")
+    fusion.add_body("Base", shape="box", length=2.0, width=2.0, height=2.0, select=False)
+    assert fusion.root.occurrences.count == 0
+    assert fusion.root.bodies.count == 1
+
+    monkeypatch.setattr(fusion.root.occurrences, "addNewComponent", _must_not_be_called)
+
+    response = call("create_component", name="Bracket")
+
+    assert mcp.error_kind(response) == "unsupported_operation"
+    message = mcp.error(response)
+    assert "part" in message.lower()
+    assert "assembly" in message.lower()
+    hint = mcp.error_hint(response)
+    assert "root component" in hint.lower()
+    assert "assembly" in hint.lower()
+    # No silent fallback to the root component: nothing was created.
+    assert fusion.root.occurrences.count == 0
+
+
+def test_create_component_proceeds_when_the_document_is_an_assembly(fusion, call, mcp):
+    # One existing occurrence makes this an assembly, so the guard must not fire.
+    fusion.root.occurrences.add(FakeComponent("Existing"), "Existing")
+    assert fusion.root.occurrences.count == 1
+
+    payload = mcp.ok(call("create_component", name="Bracket"))
+
+    assert payload["name"] == "Bracket"
+    assert payload["component"].startswith("$component_")
+    assert fusion.root.occurrences.count == 2
+    assert fusion.root.occurrences.item(1).component.name == "Bracket"
 
 
 # ── Body primitives ────────────────────────────────────────────────────────────
