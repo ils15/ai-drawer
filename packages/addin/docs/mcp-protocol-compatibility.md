@@ -70,7 +70,7 @@ Cancellation tokens belong to individual requests, so identical JSON-RPC IDs
 on two clients do not interfere. Final SSE responses terminate the HTTP body
 using chunked transfer encoding, allowing connection reuse.
 
-Modern tool requests have a 120-second waiting deadline and a limit of 16
+Modern tool requests have a 25-second waiting deadline and a limit of 16
 concurrent handler calls (`MCPServer.tool_timeout` and `max_tool_requests`).
 A timeout cancels queued work; its tool error explicitly warns that work
 already started may finish. Inspect the design before retrying a mutation.
@@ -83,7 +83,7 @@ cannot be targeted by cancellation notifications. A duplicate in-flight ID
 within one session returns a tool error and does not replace the original.
 
 Startup waits for a main-thread readiness round-trip before binding the port.
-`MCP_MAIN_THREAD_TIMEOUT` bounds dispatcher waits (default 120 seconds): queued
+`MCP_MAIN_THREAD_TIMEOUT` bounds dispatcher waits (default 25 seconds): queued
 work is cancelled; already-running work may complete and must not be blindly
 retried. Stopping cancels queued work and retires that startup generation so
 old workers, timers, and queued requests cannot resume after a restart.

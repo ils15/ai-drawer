@@ -34,6 +34,15 @@ import { asJsonRpcError, asJsonRpcSuccess } from "./json-rpc.js";
 
 export const PROTOCOL_VERSION = "2026-07-28";
 export const MCP_PATH = "/mcp";
+/**
+ * INVARIANT: the add-in's deadlines must stay strictly BELOW this value.
+ * Both add-in layers give up at 25 s -- `MCPServer.tool_timeout`
+ * (packages/addin/lib/mcp_server.py) and `MCP_MAIN_THREAD_TIMEOUT`
+ * (packages/addin/settings.py). If either were >= this deadline, a slow
+ * mutation could still be applied on the Fusion main thread AFTER this
+ * AbortController has already returned a timeout to the client -- a silent
+ * late application that causes duplicate state on retry.
+ */
 export const DEFAULT_TIMEOUT_MS = 30_000;
 export const PING_TIMEOUT_MS = 2_000;
 

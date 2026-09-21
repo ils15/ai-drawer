@@ -96,6 +96,12 @@ def create_server():
     server = mcp_server_module.MCPServer(
         host=settings.MCP_SERVER_HOST,
         port=settings.MCP_SERVER_PORT,
+        # INVARIANT: the add-in's deadlines must stay strictly below the
+        # bridge's DEFAULT_TIMEOUT_MS (30 s).  Tying the HTTP-handler deadline
+        # to MCP_MAIN_THREAD_TIMEOUT keeps both add-in layers (dispatch.py and
+        # the HTTP handler) in sync and always ahead of the bridge's
+        # AbortController.
+        tool_timeout=settings.MCP_MAIN_THREAD_TIMEOUT,
         tools=tool_surface.TOOL_DEFINITIONS,
         tool_handlers={
             name: dispatch_to_main_thread for name in operations.TOOL_HANDLERS

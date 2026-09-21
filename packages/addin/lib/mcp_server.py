@@ -106,7 +106,14 @@ class MCPServer:
         tool_handlers: dict = None,
         allowed_origins=None,
         max_tool_requests: int = 16,
-        tool_timeout: float = 120.0,
+        # INVARIANT: this deadline must stay strictly LESS than the bridge's
+        # DEFAULT_TIMEOUT_MS (30 000 ms, packages/bridge/src/upstream-client.ts).
+        # The bridge aborts its fetch at that deadline and the client then sees
+        # a timeout; if the add-in's deadline were >= 30 s, a queued mutation
+        # could still be applied on the Fusion main thread *after* the client
+        # already received the timeout error (a silent late application that
+        # causes duplicate state on retry).
+        tool_timeout: float = 25.0,
     ):
         self.host = host
         self.port = port

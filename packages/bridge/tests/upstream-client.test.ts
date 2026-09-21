@@ -226,6 +226,16 @@ describe("upstream client", () => {
   it("uses the configured default timeout", () => {
     expect(DEFAULT_TIMEOUT_MS).toBe(30_000);
   });
+
+  it("keeps the add-in deadline strictly below the bridge deadline", () => {
+    // Regression guard for the timeout invariant. The add-in must always give
+    // up before the bridge's AbortController fires, otherwise a slow mutation
+    // is applied on the Fusion main thread AFTER the client already saw a
+    // timeout. Mirrors packages/addin/settings.py (MCP_MAIN_THREAD_TIMEOUT)
+    // and packages/addin/lib/mcp_server.py (MCPServer.tool_timeout).
+    const ADDIN_DEADLINE_MS = 25_000;
+    expect(ADDIN_DEADLINE_MS).toBeLessThan(DEFAULT_TIMEOUT_MS);
+  });
 });
 
 describe("SSE frame parsing", () => {
