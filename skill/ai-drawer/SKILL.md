@@ -80,23 +80,29 @@ object. Consequences worth remembering:
 
 ## Rule 2 — units
 
-Two forms are accepted, and the distinction is per-argument:
+Three forms are accepted, and the distinction is per-argument:
 
 - **Expression strings** — anything the Fusion expression engine takes:
   `"5 mm"`, `"360 deg"`, `"width/2"`. Use these whenever you want a unit the
   design understands, and prefer them for dimensions a human reads.
-- **Bare numbers** — read as **internal centimetres**. `2.0` means 2 cm, not 2
-  mm.
+- **Bare numbers** — read in the call's unit, which is **centimetres unless the
+  `units` field says otherwise**. `2.0` with no `units` means 2 cm.
+- **The `units` field** — every dimension-bearing tool accepts an optional
+  top-level `units` (`"mm"`, `"cm"`, `"in"`, `"m"`) that sets the unit for every
+  bare number in that call. `units: "mm"` + `radius: 5` is 5 mm; without it, the
+  same `5` is 5 cm. It never applies to expression strings — those carry their
+  own unit and are passed to the engine unchanged.
 
-Not every argument accepts both; the tool's own schema says which. When in doubt,
-pass a string with an explicit unit — `"5 mm"` is unambiguous, `5` is not.
+Not every argument accepts both forms; the tool's own schema says which. When in
+doubt, pass a string with an explicit unit — `"5 mm"` is unambiguous, `5` is not.
 
 **This is the mistake that distorted a real model on the first field run.** The
 user passed a bare `92` intending millimetres; the surface read it as internal
 centimetres, so the part came out at 92 cm — an order of magnitude wrong, and
 silent until the geometry was inspected. The rule: **pass an expression string
-with an explicit unit for every dimension a human reads** (`"92 mm"`, `"5 mm"`).
-Use bare numbers only when you genuinely mean internal centimetres.
+with an explicit unit for every dimension a human reads** (`"92 mm"`, `"5 mm"`),
+or set `units: "mm"` once and use bare numbers for the whole call. Use bare
+numbers with no `units` only when you genuinely mean internal centimetres.
 
 Inspection results come back in the same system: distances and volumes in
 centimetres, angles in radians. Convert before quoting a number to the user.

@@ -19,7 +19,7 @@ import math
 import adsk.core
 import adsk.fusion
 
-from ..value_builders import OBJECT_STORE, FusionContext
+from ..value_builders import OBJECT_STORE, FusionContext, read_units, to_cm
 from . import (
     MissingArgument,
     active_app,
@@ -72,12 +72,19 @@ def _resolve_entity(ref, design):
     return _entity_context._resolve_stored(ref)
 
 
-def _to_value_input(value):
-    """Build a ``ValueInput``: numbers are reals (cm), strings are expressions."""
+def _to_value_input(value, units="cm"):
+    """Build a ``ValueInput`` for a dimension given in ``units``.
+
+    Numbers are lengths in ``units`` (``92`` + ``"mm"`` becomes the internal
+    9.2 cm), rescaled once by :func:`to_cm` on the way in.  Strings are Fusion
+    *expressions* (``"92 mm"``, ``"w/2"``) and are handed to the expression
+    engine UNCHANGED -- that engine resolves units natively, so converting an
+    expression here would double-apply it.  Booleans are rejected, as before.
+    """
     if isinstance(value, bool):
         raise ValueError("a boolean is not a valid dimension")
     if isinstance(value, (int, float)):
-        return adsk.core.ValueInput.createByReal(float(value))
+        return adsk.core.ValueInput.createByReal(to_cm(value, units))
     return adsk.core.ValueInput.createByString(str(value))
 
 
@@ -157,18 +164,28 @@ def _numeric(value, name):
     return float(value)
 
 
-def _positive_number(value, name):
-    """A dimension in centimetres: present, numeric, and strictly positive."""
+def _positive_number(value, name, units="cm"):
+    """A dimension given in ``units``: present, numeric, strictly positive.
+
+    The caller's unit is folded to centimetres here, so the rest of the tool
+    and every Fusion call downstream sees internal units.  A string is not
+    accepted: this helper feeds the raw primitives (TemporaryBRepManager,
+    sketch circles) that take plain floats rather than ValueInputs, so an
+    expression cannot be resolved here -- use _to_value_input for a tool that
+    hands a ValueInput to the API.
+    """
     value = _numeric(value, name)
     if value <= 0:
         raise ValueError(f"{name} must be greater than zero")
-    return value
+    return to_cm(value, units)
 
 
-def _point3d(value, name="point"):
-    """Build a ``Point3D`` from an ``{x, y, z}`` object given in centimetres."""
+def _point3d(value, name="point", units="cm"):
+    """Build a ``Point3D`` from an ``{x, y, z}`` object given in ``units``."""
     try:
-        return adsk.core.Point3D.create(float(value["x"]), float(value["y"]), float(value["z"]))
+        return adsk.core.Point3D.create(
+            to_cm(value["x"], units), to_cm(value["y"], units), to_cm(value["z"], units)
+        )
     except (AttributeError, KeyError, TypeError, ValueError) as exc:
         raise ValueError(f"{name} must be an object with numeric x, y, and z in centimetres") from exc
 
@@ -231,6 +248,7 @@ def fillet(arguments):
     """
     edge_refs = require(arguments, "edges")["edges"]
     radius = _require_dimension(arguments, "radius")
+    units = read_units(arguments)
     is_tangent_chain = arguments.get("is_tangent_chain", True)
     if not isinstance(is_tangent_chain, bool):
         raise ValueError("is_tangent_chain must be boolean")
@@ -248,7 +266,7 @@ def fillet(arguments):
             "unsupported_operation",
             "This Fusion build cannot define a fillet edge set",
         )
-    edge_sets.addConstantRadiusEdgeSet(edges, _to_value_input(radius), is_tangent_chain)
+    edge_sets.addConstantRadiusEdgeSet(edges, _to_value_input(radius, units), is_tangent_chain)
     feature = fillet_features.add(fillet_input)
     if feature is None:
         return _refused("fillet")
@@ -273,6 +291,7 @@ def chamfer(arguments):
     """
     edge_refs = require(arguments, "edges")["edges"]
     distance = _require_dimension(arguments, "distance")
+    units = read_units(arguments)
     design = active_design()
     if design is None:
         return structured_error("no_active_document", _NO_DESIGN)
@@ -287,7 +306,7 @@ def chamfer(arguments):
             "unsupported_operation",
             "This Fusion build cannot define a chamfer edge set",
         )
-    edge_sets.addEqualDistanceChamferEdgeSet(edges, _to_value_input(distance), True)
+    edge_sets.addEqualDistanceChamferEdgeSet(edges, _to_value_input(distance, units), True)
     feature = chamfer_features.add(chamfer_input)
     if feature is None:
         return _refused("chamfer")
@@ -313,6 +332,7 @@ def hole(arguments):
     face_ref = require(arguments, "face")["face"]
     position = require(arguments, "position")["position"]
     diameter = _require_dimension(arguments, "diameter")
+    units = read_units(arguments)
     # The extent describes what this hole will do *in this design*, so the
     # missing-document precondition is reported first -- otherwise a caller
     # with no document open hears about a depth they cannot use yet.
@@ -330,13 +350,13 @@ def hole(arguments):
         raise ValueError("direction must be 'positive' or 'negative'")
     face = _resolve_entity(face_ref, design)
     try:
-        point = adsk.core.Point3D.create(float(position["x"]), float(position["y"]), float(position["z"]))
-    except (KeyError, TypeError, ValueError) as exc:
+        point = _point3d(position, "position", units)
+    except ValueError as exc:
         raise ValueError("position must be an object with numeric x, y, and z in centimetres") from exc
     hole_features, error = _feature_collection(design, "holeFeatures")
     if error is not None:
         return error
-    hole_input = hole_features.createSimpleInput(_to_value_input(diameter))
+    hole_input = hole_features.createSimpleInput(_to_value_input(diameter, units))
     hole_input.setPositionByPoint(face, point)
     if extent == "through_all":
         extent_direction = (
@@ -346,7 +366,7 @@ def hole(arguments):
         )
         hole_input.setAllExtent(extent_direction)
     else:
-        hole_input.setDistanceExtent(_to_value_input(depth))
+        hole_input.setDistanceExtent(_to_value_input(depth, units))
     feature = hole_features.add(hole_input)
     if feature is None:
         return _refused("hole")
@@ -379,6 +399,7 @@ def rectangular_pattern(arguments):
     direction_two = arguments.get("direction_two")
     quantity_two = arguments.get("quantity_two")
     distance_two = arguments.get("distance_two")
+    units = read_units(arguments)
     is_symmetric = arguments.get("is_symmetric", False)
     if not isinstance(is_symmetric, bool):
         raise ValueError("is_symmetric must be boolean")
@@ -400,14 +421,14 @@ def rectangular_pattern(arguments):
         entities,
         _resolve_entity(direction_one, design),
         _to_value_input(quantity_one),
-        _to_value_input(distance_one),
+        _to_value_input(distance_one, units),
         adsk.fusion.PatternDistanceType.SpacingPatternDistanceType,
     )
     pattern_input.isSymmetricInDirectionOne = is_symmetric
     if direction_two:
         pattern_input.directionTwoEntity = _resolve_entity(direction_two, design)
         pattern_input.quantityTwo = _to_value_input(quantity_two)
-        pattern_input.distanceTwo = _to_value_input(distance_two)
+        pattern_input.distanceTwo = _to_value_input(distance_two, units)
         pattern_input.isSymmetricInDirectionTwo = is_symmetric
     feature = pattern_features.add(pattern_input)
     if feature is None:
@@ -480,23 +501,27 @@ def circular_pattern(arguments):
 # API decided a set of curves formed.
 
 
-def _add_curve(sketch, curve):
-    """Append one line, circle, or arc to a sketch, in centimetres."""
+def _add_curve(sketch, curve, units):
+    """Append one line, circle, or arc to a sketch, converting lengths in ``units``.
+
+    Arc ``sweep`` is an *angle* in degrees, not a length, so it is deliberately
+    left out of the unit conversion.
+    """
     if not isinstance(curve, dict):
         raise ValueError("each curve must be an object")
     kind = curve.get("kind")
     curves = sketch.sketchCurves
     if kind == "line":
-        start = _point3d(curve.get("start"), "start")
-        end = _point3d(curve.get("end"), "end")
+        start = _point3d(curve.get("start"), "start", units)
+        end = _point3d(curve.get("end"), "end", units)
         return curves.sketchLines.addByTwoPoints(start, end)
     if kind == "circle":
-        center = _point3d(curve.get("center"), "center")
-        radius = _positive_number(curve.get("radius"), "radius")
+        center = _point3d(curve.get("center"), "center", units)
+        radius = _positive_number(curve.get("radius"), "radius", units)
         return curves.sketchCircles.addByCenterRadius(center, radius)
     if kind == "arc":
-        center = _point3d(curve.get("center"), "center")
-        start = _point3d(curve.get("start"), "start")
+        center = _point3d(curve.get("center"), "center", units)
+        start = _point3d(curve.get("start"), "start", units)
         sweep = _numeric(curve.get("sweep"), "sweep")
         # The API takes the sweep in radians, positive being counter-clockwise;
         # the schema carries friendlier degrees.
@@ -517,6 +542,7 @@ def create_sketch(arguments):
     """
     plane_name = require(arguments, "plane")["plane"]
     curve_specs = require(arguments, "curves")["curves"]
+    units = read_units(arguments)
     if not isinstance(curve_specs, (list, tuple)):
         raise ValueError("curves must be an array")
     design = active_design()
@@ -538,7 +564,7 @@ def create_sketch(arguments):
         return structured_error("unsupported_operation", "This Fusion build cannot create a sketch")
     sketch = sketches.add(plane)
     for curve in curve_specs:
-        _add_curve(sketch, curve)
+        _add_curve(sketch, curve, units)
     profiles = safe_get(sketch, "profiles")
     profile_handles = []
     if profiles is not None:
@@ -571,6 +597,7 @@ def extrude(arguments):
     extent = arguments.get("extent", "distance")
     distance = arguments.get("distance")
     direction = arguments.get("direction", "positive")
+    units = read_units(arguments)
     design = active_design()
     if design is None:
         return structured_error("no_active_document", _NO_DESIGN)
@@ -584,10 +611,10 @@ def extrude(arguments):
         return error
     extrude_input = extrude_features.createInput(profile, _feature_operation(operation))
     if extent == "symmetric":
-        extrude_input.setSymmetricExtent(adsk.fusion.DistanceExtentDefinition.create(_to_value_input(distance)))
+        extrude_input.setSymmetricExtent(adsk.fusion.DistanceExtentDefinition.create(_to_value_input(distance, units)))
     elif extent == "distance":
         extrude_input.setOneSideExtent(
-            adsk.fusion.DistanceExtentDefinition.create(_to_value_input(distance)),
+            adsk.fusion.DistanceExtentDefinition.create(_to_value_input(distance, units)),
             _extent_direction(direction),
         )
     else:
@@ -734,15 +761,15 @@ def create_component(arguments):
     )
 
 
-def _temporary_body(shape, dimensions):
-    """Build a transient solid with ``TemporaryBRepManager``, in centimetres."""
+def _temporary_body(shape, dimensions, units):
+    """Build a transient solid with ``TemporaryBRepManager``, converting lengths in ``units``."""
     if not isinstance(dimensions, dict):
         raise ValueError("dimensions must be an object")
     manager = adsk.fusion.TemporaryBRepManager.get()
     if shape == "box":
-        length = _positive_number(dimensions.get("length"), "length")
-        width = _positive_number(dimensions.get("width"), "width")
-        height = _positive_number(dimensions.get("height"), "height")
+        length = _positive_number(dimensions.get("length"), "length", units)
+        width = _positive_number(dimensions.get("width"), "width", units)
+        height = _positive_number(dimensions.get("height"), "height", units)
         return manager.createBox(
             adsk.core.BoundingBox3D.create(
                 adsk.core.Point3D.create(0.0, 0.0, 0.0),
@@ -750,8 +777,8 @@ def _temporary_body(shape, dimensions):
             )
         )
     if shape == "cylinder":
-        radius = _positive_number(dimensions.get("radius"), "radius")
-        height = _positive_number(dimensions.get("height"), "height")
+        radius = _positive_number(dimensions.get("radius"), "radius", units)
+        height = _positive_number(dimensions.get("height"), "height", units)
         return manager.createCylinderOrCone(
             adsk.core.Point3D.create(0.0, 0.0, 0.0),
             adsk.core.Point3D.create(0.0, 0.0, height),
@@ -759,7 +786,7 @@ def _temporary_body(shape, dimensions):
             radius,
         )
     if shape == "sphere":
-        radius = _positive_number(dimensions.get("radius"), "radius")
+        radius = _positive_number(dimensions.get("radius"), "radius", units)
         return manager.createSphere(adsk.core.Point3D.create(0.0, 0.0, 0.0), radius)
     raise ValueError("shape must be 'box', 'cylinder', or 'sphere'")
 
@@ -777,12 +804,13 @@ def create_body(arguments):
     shape = require(arguments, "shape")["shape"]
     dimensions = require(arguments, "dimensions")["dimensions"]
     name = arguments.get("name")
+    units = read_units(arguments)
     design = active_design()
     if design is None:
         return structured_error("no_active_document", _NO_DESIGN)
     if shape not in ("box", "cylinder", "sphere"):
         raise ValueError("shape must be 'box', 'cylinder', or 'sphere'")
-    temporary_body = _temporary_body(shape, dimensions)
+    temporary_body = _temporary_body(shape, dimensions, units)
     root = safe_get(design, "rootComponent")
     bodies = safe_get(root, "bodies")
     if bodies is None:

@@ -87,6 +87,26 @@ const EXPORT_FORMATS = ["step", "stl", "f3d", "iges", "obj", "pdf"] as const;
 const STL_DENSITY = ["low", "medium", "high"] as const;
 const STL_UNITS = ["mm", "cm", "in", "m"] as const;
 
+/**
+ * The unit a tool's bare numbers are stated in; mirrors the add-in's
+ * LENGTH_UNITS, which in turn mirrors value_builders.CM_PER_UNIT.
+ */
+const LENGTH_UNITS = ["mm", "cm", "in", "m"] as const;
+
+/**
+ * The add-in's UNITS_PROPERTY: every dimension-bearing tool carries it. Bare
+ * numbers in that call are read in this unit; expression strings carry their
+ * own unit and are never rescaled. Defaults to centimetres, the API's internal
+ * unit, so a call that omits it behaves exactly as before.
+ */
+const unitsSchema = z
+  .enum(LENGTH_UNITS)
+  .optional()
+  .describe(
+    "Unit for every bare number in this call; expression strings carry their own unit and are never rescaled. Default is cm.",
+  )
+  .meta({ examples: ["mm"] });
+
 /** xyz point in centimeters; shared by the get_viewport/set_viewport camera. */
 const pointSchema = z
   .strictObject({
@@ -95,6 +115,31 @@ const pointSchema = z
     z: z.number().min(-1e12).max(1e12).describe("Z component in centimeters."),
   })
   .describe("A 3D position or direction vector; x, y, and z are in centimeters.");
+
+/**
+ * xyz point on a sketch curve. Unlike the camera's pointSchema, each component
+ * may be a Fusion expression string, and a bare number is a length in the call's
+ * units rather than always centimetres. The unit itself is read once at the tool
+ * level (read_units(arguments)), never per-point, so this object carries no
+ * units member. The camera-facing pointSchema stays untouched: viewport
+ * coordinates are always centimetres and are shared with the
+ * get_viewport/set_viewport tools.
+ */
+const curvePointSchema = z
+  .strictObject({
+    x: z
+      .union([z.string(), z.number()])
+      .describe("X component; a bare number is this tool's units (default cm), or a Fusion expression."),
+    y: z
+      .union([z.string(), z.number()])
+      .describe("Y component; a bare number is this tool's units (default cm), or a Fusion expression."),
+    z: z
+      .union([z.string(), z.number()])
+      .describe("Z component; a bare number is this tool's units (default cm), or a Fusion expression."),
+  })
+  .describe(
+    "A 3D point on a sketch curve; each component is a bare number in the tool's units (default cm) or a Fusion expression string.",
+  );
 
 /**
  * One sketch curve, discriminated by 'kind'. The add-in's owned validator has no
@@ -108,16 +153,14 @@ const pointSchema = z
 const curveSchema = z
   .strictObject({
     kind: z.enum(["line", "circle", "arc"]).describe("Which curve this is, and which members are required."),
-    start: pointSchema.optional(),
-    end: pointSchema.optional(),
-    center: pointSchema.optional(),
+    start: curvePointSchema.optional(),
+    end: curvePointSchema.optional(),
+    center: curvePointSchema.optional(),
     radius: z
-      .number()
-      .min(1e-9)
-      .max(1e12)
+      .union([z.string(), z.number()])
       .optional()
-      .describe("Circle radius in centimetres.")
-      .meta({ examples: [1] }),
+      .describe("Circle radius as a Fusion expression, or a bare number in this tool's units (default cm).")
+      .meta({ examples: [1, "5 mm"] }),
     sweep: z
       .number()
       .min(-360)
@@ -140,33 +183,31 @@ const curveSchema = z
 const dimensionsSchema = z
   .strictObject({
     length: z
-      .number()
-      .min(1e-9)
-      .max(1e12)
+      .union([z.string(), z.number()])
       .optional()
-      .describe("Box length along the x axis in centimetres.")
-      .meta({ examples: [2] }),
+      .describe(
+        "Box length along the x axis as a Fusion expression, or a bare number in this tool's units (default cm).",
+      )
+      .meta({ examples: [2, "20 mm"] }),
     width: z
-      .number()
-      .min(1e-9)
-      .max(1e12)
+      .union([z.string(), z.number()])
       .optional()
-      .describe("Box width along the y axis in centimetres.")
-      .meta({ examples: [2] }),
+      .describe(
+        "Box width along the y axis as a Fusion expression, or a bare number in this tool's units (default cm).",
+      )
+      .meta({ examples: [2, "20 mm"] }),
     height: z
-      .number()
-      .min(1e-9)
-      .max(1e12)
+      .union([z.string(), z.number()])
       .optional()
-      .describe("Box or cylinder height along the z axis in centimetres.")
-      .meta({ examples: [3] }),
+      .describe(
+        "Box or cylinder height along the z axis as a Fusion expression, or a bare number in this tool's units (default cm).",
+      )
+      .meta({ examples: [3, "30 mm"] }),
     radius: z
-      .number()
-      .min(1e-9)
-      .max(1e12)
+      .union([z.string(), z.number()])
       .optional()
-      .describe("Cylinder or sphere radius in centimetres.")
-      .meta({ examples: [1] }),
+      .describe("Cylinder or sphere radius as a Fusion expression, or a bare number in this tool's units (default cm).")
+      .meta({ examples: [1, "5 mm"] }),
   })
   .describe(
     "Body dimensions in centimetres; which members are required depends on the shape: box needs length, " +
@@ -568,13 +609,14 @@ export const TOOL_ARGS: Readonly<Record<string, z.ZodType>> = {
         .describe('Stored selection handles of the edges to fillet, e.g. ["$selection_0"].')
         .meta({ examples: [["$selection_0", "$selection_1"]] }),
       radius: z
-        .string()
-        .describe("Fillet radius as a Fusion expression; a bare number is centimetres.")
+        .union([z.string(), z.number()])
+        .describe("Fillet radius as a Fusion expression, or a bare number in this tool's units (default cm).")
         .meta({ examples: ["5 mm", "0.25 in"] }),
       is_tangent_chain: z
         .boolean()
         .optional()
         .describe("Also fillet edges tangentially connected to the input edges (default: true)."),
+      units: unitsSchema,
     })
     .describe(
       "Add a constant-radius fillet across one or more edges of the active design. " +
@@ -589,9 +631,12 @@ export const TOOL_ARGS: Readonly<Record<string, z.ZodType>> = {
         .describe('Stored selection handles of the edges to chamfer, e.g. ["$selection_0"].')
         .meta({ examples: [["$selection_0"]] }),
       distance: z
-        .string()
-        .describe("Chamfer offset distance as a Fusion expression; a bare number is centimetres.")
+        .union([z.string(), z.number()])
+        .describe(
+          "Chamfer offset distance as a Fusion expression, or a bare number in this tool's units (default cm); offsets both sides equally.",
+        )
         .meta({ examples: ["2 mm", "0.1 in"] }),
+      units: unitsSchema,
     })
     .describe(
       "Add an equal-distance chamfer across one or more edges of the active design. " +
@@ -606,28 +651,37 @@ export const TOOL_ARGS: Readonly<Record<string, z.ZodType>> = {
         .meta({ examples: ["$selection_0"] }),
       position: z
         .strictObject({
-          x: z.number().describe("X coordinate in centimetres."),
-          y: z.number().describe("Y coordinate in centimetres."),
-          z: z.number().describe("Z coordinate in centimetres."),
+          x: z
+            .union([z.string(), z.number()])
+            .describe("X coordinate; a bare number is this tool's units (default cm), or a Fusion expression."),
+          y: z
+            .union([z.string(), z.number()])
+            .describe("Y coordinate; a bare number is this tool's units (default cm), or a Fusion expression."),
+          z: z
+            .union([z.string(), z.number()])
+            .describe("Z coordinate; a bare number is this tool's units (default cm), or a Fusion expression."),
         })
         .describe("Hole centre as a 3D point in centimetres, dropped onto the face along its normal."),
       diameter: z
-        .string()
-        .describe("Hole diameter as a Fusion expression; a bare number is centimetres.")
+        .union([z.string(), z.number()])
+        .describe("Hole diameter as a Fusion expression, or a bare number in this tool's units (default cm).")
         .meta({ examples: ["8 mm", "0.25 in"] }),
       extent: z
         .enum(["distance", "through_all"])
         .optional()
         .describe("Hole extent: a fixed distance (needs depth) or through-all (default: distance)."),
       depth: z
-        .string()
+        .union([z.string(), z.number()])
         .optional()
-        .describe("Hole depth as a Fusion expression; required for extent=distance, else ignored.")
+        .describe(
+          "Hole depth as a Fusion expression, or a bare number in this tool's units (default cm); required for extent=distance, else ignored.",
+        )
         .meta({ examples: ["10 mm"] }),
       direction: z
         .enum(["positive", "negative"])
         .optional()
         .describe("Which way the hole runs off the face normal (default: positive)."),
+      units: unitsSchema,
     })
     .describe(
       "Drill a simple hole at a point on a planar face of the active design. " +
@@ -650,8 +704,8 @@ export const TOOL_ARGS: Readonly<Record<string, z.ZodType>> = {
         .describe("Number of instances in the first direction, a unitless count.")
         .meta({ examples: [3] }),
       distance_one: z
-        .string()
-        .describe("First-direction spacing as a Fusion expression; a bare number is centimetres.")
+        .union([z.string(), z.number()])
+        .describe("First-direction spacing as a Fusion expression, or a bare number in this tool's units (default cm).")
         .meta({ examples: ["20 mm"] }),
       direction_two: z
         .string()
@@ -664,14 +718,17 @@ export const TOOL_ARGS: Readonly<Record<string, z.ZodType>> = {
         .describe("Optional instance count in the second direction, a unitless count.")
         .meta({ examples: [2] }),
       distance_two: z
-        .string()
+        .union([z.string(), z.number()])
         .optional()
-        .describe("Second-direction spacing as a Fusion expression; a bare number is centimetres.")
+        .describe(
+          "Second-direction spacing as a Fusion expression, or a bare number in this tool's units (default cm).",
+        )
         .meta({ examples: ["15 mm"] }),
       is_symmetric: z
         .boolean()
         .optional()
         .describe("Distribute instances symmetrically about the seed (default: false)."),
+      units: unitsSchema,
     })
     .describe(
       "Pattern bodies, faces, or features along one direction, optionally a second. " +
@@ -731,6 +788,7 @@ export const TOOL_ARGS: Readonly<Record<string, z.ZodType>> = {
             ],
           ],
         }),
+      units: unitsSchema,
     })
     .describe(
       "Draw one or more curves on a base construction plane (xy, xz, or yz) of the root component. " +
@@ -756,17 +814,18 @@ export const TOOL_ARGS: Readonly<Record<string, z.ZodType>> = {
         .optional()
         .describe("Extrude extent: distance, through all geometry, or symmetric (default: distance)."),
       distance: z
-        .string()
+        .union([z.string(), z.number()])
         .optional()
         .describe(
-          "Extrude distance as a Fusion expression; a bare number is centimetres. Required for extent " +
-            "distance and symmetric.",
+          "Extrude distance as a Fusion expression, or a bare number in this tool's units (default cm). Required " +
+            "for extent distance and symmetric.",
         )
-        .meta({ examples: ["10 mm", 2.5] }),
+        .meta({ examples: ["10 mm", "2.5 cm"] }),
       direction: z
         .enum(["positive", "negative"])
         .optional()
         .describe("Which way a one-sided extent runs off the profile (default: positive)."),
+      units: unitsSchema,
     })
     .describe(
       "Sweep a closed profile into a solid body. The profile is a handle returned by create_sketch " +
@@ -825,6 +884,7 @@ export const TOOL_ARGS: Readonly<Record<string, z.ZodType>> = {
         .optional()
         .describe("Optional body name; Fusion assigns one when omitted.")
         .meta({ examples: ["Housing"] }),
+      units: unitsSchema,
     })
     .describe(
       "Add a primitive box, cylinder, or sphere body to the root component. Dimensions are in centimetres: " +

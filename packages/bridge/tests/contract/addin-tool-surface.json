@@ -747,8 +747,11 @@
             ]
           },
           "radius": {
-            "type": "string",
-            "description": "Fillet radius as a Fusion expression; a bare number is centimetres.",
+            "type": [
+              "string",
+              "number"
+            ],
+            "description": "Fillet radius as a Fusion expression, or a bare number in this tool's units (default cm).",
             "examples": [
               "5 mm",
               "0.25 in"
@@ -757,6 +760,19 @@
           "is_tangent_chain": {
             "type": "boolean",
             "description": "Also fillet edges tangentially connected to the input edges (default: true)."
+          },
+          "units": {
+            "type": "string",
+            "enum": [
+              "mm",
+              "cm",
+              "in",
+              "m"
+            ],
+            "description": "Unit for every bare number in this call; expression strings carry their own unit and are never rescaled. Default is cm.",
+            "examples": [
+              "mm"
+            ]
           }
         },
         "required": [
@@ -786,11 +802,27 @@
             ]
           },
           "distance": {
-            "type": "string",
-            "description": "Chamfer offset distance as a Fusion expression; a bare number is centimetres.",
+            "type": [
+              "string",
+              "number"
+            ],
+            "description": "Chamfer offset distance as a Fusion expression, or a bare number in this tool's units (default cm); offsets both sides equally.",
             "examples": [
               "2 mm",
               "0.1 in"
+            ]
+          },
+          "units": {
+            "type": "string",
+            "enum": [
+              "mm",
+              "cm",
+              "in",
+              "m"
+            ],
+            "description": "Unit for every bare number in this call; expression strings carry their own unit and are never rescaled. Default is cm.",
+            "examples": [
+              "mm"
             ]
           }
         },
@@ -820,16 +852,25 @@
             "description": "Hole centre as a 3D point in centimetres, dropped onto the face along its normal.",
             "properties": {
               "x": {
-                "type": "number",
-                "description": "X coordinate in centimetres."
+                "type": [
+                  "string",
+                  "number"
+                ],
+                "description": "X coordinate; a bare number is this tool's units (default cm), or a Fusion expression."
               },
               "y": {
-                "type": "number",
-                "description": "Y coordinate in centimetres."
+                "type": [
+                  "string",
+                  "number"
+                ],
+                "description": "Y coordinate; a bare number is this tool's units (default cm), or a Fusion expression."
               },
               "z": {
-                "type": "number",
-                "description": "Z coordinate in centimetres."
+                "type": [
+                  "string",
+                  "number"
+                ],
+                "description": "Z coordinate; a bare number is this tool's units (default cm), or a Fusion expression."
               }
             },
             "required": [
@@ -840,8 +881,11 @@
             "additionalProperties": false
           },
           "diameter": {
-            "type": "string",
-            "description": "Hole diameter as a Fusion expression; a bare number is centimetres.",
+            "type": [
+              "string",
+              "number"
+            ],
+            "description": "Hole diameter as a Fusion expression, or a bare number in this tool's units (default cm).",
             "examples": [
               "8 mm",
               "0.25 in"
@@ -856,8 +900,11 @@
             "description": "Hole extent: a fixed distance (needs depth) or through-all (default: distance)."
           },
           "depth": {
-            "type": "string",
-            "description": "Hole depth as a Fusion expression; required for extent=distance, else ignored.",
+            "type": [
+              "string",
+              "number"
+            ],
+            "description": "Hole depth as a Fusion expression, or a bare number in this tool's units (default cm); required for extent=distance, else ignored.",
             "examples": [
               "10 mm"
             ]
@@ -869,6 +916,19 @@
               "negative"
             ],
             "description": "Which way the hole runs off the face normal (default: positive)."
+          },
+          "units": {
+            "type": "string",
+            "enum": [
+              "mm",
+              "cm",
+              "in",
+              "m"
+            ],
+            "description": "Unit for every bare number in this call; expression strings carry their own unit and are never rescaled. Default is cm.",
+            "examples": [
+              "mm"
+            ]
           }
         },
         "required": [
@@ -913,8 +973,11 @@
             ]
           },
           "distance_one": {
-            "type": "string",
-            "description": "First-direction spacing as a Fusion expression; a bare number is centimetres.",
+            "type": [
+              "string",
+              "number"
+            ],
+            "description": "First-direction spacing as a Fusion expression, or a bare number in this tool's units (default cm).",
             "examples": [
               "20 mm"
             ]
@@ -934,8 +997,11 @@
             ]
           },
           "distance_two": {
-            "type": "string",
-            "description": "Second-direction spacing as a Fusion expression; a bare number is centimetres.",
+            "type": [
+              "string",
+              "number"
+            ],
+            "description": "Second-direction spacing as a Fusion expression, or a bare number in this tool's units (default cm).",
             "examples": [
               "15 mm"
             ]
@@ -943,6 +1009,19 @@
           "is_symmetric": {
             "type": "boolean",
             "description": "Distribute instances symmetrically about the seed (default: false)."
+          },
+          "units": {
+            "type": "string",
+            "enum": [
+              "mm",
+              "cm",
+              "in",
+              "m"
+            ],
+            "description": "Unit for every bare number in this call; expression strings carry their own unit and are never rescaled. Default is cm.",
+            "examples": [
+              "mm"
+            ]
           }
         },
         "required": [
@@ -1044,25 +1123,28 @@
                 },
                 "start": {
                   "type": "object",
-                  "description": "A 3D position or direction vector; x, y, and z are in centimeters.",
+                  "description": "A 3D point on a sketch curve; each component is a bare number in the tool's units (default cm) or a Fusion expression string.",
                   "properties": {
                     "x": {
-                      "type": "number",
-                      "minimum": -1000000000000.0,
-                      "maximum": 1000000000000.0,
-                      "description": "X component in centimeters."
+                      "type": [
+                        "string",
+                        "number"
+                      ],
+                      "description": "X component; a bare number is this tool's units (default cm), or a Fusion expression."
                     },
                     "y": {
-                      "type": "number",
-                      "minimum": -1000000000000.0,
-                      "maximum": 1000000000000.0,
-                      "description": "Y component in centimeters."
+                      "type": [
+                        "string",
+                        "number"
+                      ],
+                      "description": "Y component; a bare number is this tool's units (default cm), or a Fusion expression."
                     },
                     "z": {
-                      "type": "number",
-                      "minimum": -1000000000000.0,
-                      "maximum": 1000000000000.0,
-                      "description": "Z component in centimeters."
+                      "type": [
+                        "string",
+                        "number"
+                      ],
+                      "description": "Z component; a bare number is this tool's units (default cm), or a Fusion expression."
                     }
                   },
                   "required": [
@@ -1074,25 +1156,28 @@
                 },
                 "end": {
                   "type": "object",
-                  "description": "A 3D position or direction vector; x, y, and z are in centimeters.",
+                  "description": "A 3D point on a sketch curve; each component is a bare number in the tool's units (default cm) or a Fusion expression string.",
                   "properties": {
                     "x": {
-                      "type": "number",
-                      "minimum": -1000000000000.0,
-                      "maximum": 1000000000000.0,
-                      "description": "X component in centimeters."
+                      "type": [
+                        "string",
+                        "number"
+                      ],
+                      "description": "X component; a bare number is this tool's units (default cm), or a Fusion expression."
                     },
                     "y": {
-                      "type": "number",
-                      "minimum": -1000000000000.0,
-                      "maximum": 1000000000000.0,
-                      "description": "Y component in centimeters."
+                      "type": [
+                        "string",
+                        "number"
+                      ],
+                      "description": "Y component; a bare number is this tool's units (default cm), or a Fusion expression."
                     },
                     "z": {
-                      "type": "number",
-                      "minimum": -1000000000000.0,
-                      "maximum": 1000000000000.0,
-                      "description": "Z component in centimeters."
+                      "type": [
+                        "string",
+                        "number"
+                      ],
+                      "description": "Z component; a bare number is this tool's units (default cm), or a Fusion expression."
                     }
                   },
                   "required": [
@@ -1104,25 +1189,28 @@
                 },
                 "center": {
                   "type": "object",
-                  "description": "A 3D position or direction vector; x, y, and z are in centimeters.",
+                  "description": "A 3D point on a sketch curve; each component is a bare number in the tool's units (default cm) or a Fusion expression string.",
                   "properties": {
                     "x": {
-                      "type": "number",
-                      "minimum": -1000000000000.0,
-                      "maximum": 1000000000000.0,
-                      "description": "X component in centimeters."
+                      "type": [
+                        "string",
+                        "number"
+                      ],
+                      "description": "X component; a bare number is this tool's units (default cm), or a Fusion expression."
                     },
                     "y": {
-                      "type": "number",
-                      "minimum": -1000000000000.0,
-                      "maximum": 1000000000000.0,
-                      "description": "Y component in centimeters."
+                      "type": [
+                        "string",
+                        "number"
+                      ],
+                      "description": "Y component; a bare number is this tool's units (default cm), or a Fusion expression."
                     },
                     "z": {
-                      "type": "number",
-                      "minimum": -1000000000000.0,
-                      "maximum": 1000000000000.0,
-                      "description": "Z component in centimeters."
+                      "type": [
+                        "string",
+                        "number"
+                      ],
+                      "description": "Z component; a bare number is this tool's units (default cm), or a Fusion expression."
                     }
                   },
                   "required": [
@@ -1133,12 +1221,14 @@
                   "additionalProperties": false
                 },
                 "radius": {
-                  "type": "number",
-                  "minimum": 1e-09,
-                  "maximum": 1000000000000.0,
-                  "description": "Circle radius in centimetres.",
+                  "type": [
+                    "string",
+                    "number"
+                  ],
+                  "description": "Circle radius as a Fusion expression, or a bare number in this tool's units (default cm).",
                   "examples": [
-                    1.0
+                    1.0,
+                    "5 mm"
                   ]
                 },
                 "sweep": {
@@ -1213,6 +1303,19 @@
                 }
               ]
             ]
+          },
+          "units": {
+            "type": "string",
+            "enum": [
+              "mm",
+              "cm",
+              "in",
+              "m"
+            ],
+            "description": "Unit for every bare number in this call; expression strings carry their own unit and are never rescaled. Default is cm.",
+            "examples": [
+              "mm"
+            ]
           }
         },
         "required": [
@@ -1256,11 +1359,27 @@
             "description": "Extrude extent: distance, through all geometry, or symmetric (default: distance)."
           },
           "distance": {
-            "type": "string",
-            "description": "Extrude distance as a Fusion expression; a bare number is centimetres. Required for extent distance and symmetric.",
+            "type": [
+              "string",
+              "number"
+            ],
+            "description": "Extrude distance as a Fusion expression, or a bare number in this tool's units (default cm). Required for extent distance and symmetric.",
             "examples": [
               "10 mm",
-              2.5
+              "2.5 cm"
+            ]
+          },
+          "units": {
+            "type": "string",
+            "enum": [
+              "mm",
+              "cm",
+              "in",
+              "m"
+            ],
+            "description": "Unit for every bare number in this call; expression strings carry their own unit and are never rescaled. Default is cm.",
+            "examples": [
+              "mm"
             ]
           },
           "direction": {
@@ -1371,39 +1490,47 @@
             "description": "Body dimensions in centimetres; which members are required depends on the shape: box needs length, width, and height; cylinder needs radius and height; sphere needs radius alone.",
             "properties": {
               "length": {
-                "type": "number",
-                "minimum": 1e-09,
-                "maximum": 1000000000000.0,
-                "description": "Box length along the x axis in centimetres.",
+                "type": [
+                  "string",
+                  "number"
+                ],
+                "description": "Box length along the x axis as a Fusion expression, or a bare number in this tool's units (default cm).",
                 "examples": [
-                  2.0
+                  2.0,
+                  "20 mm"
                 ]
               },
               "width": {
-                "type": "number",
-                "minimum": 1e-09,
-                "maximum": 1000000000000.0,
-                "description": "Box width along the y axis in centimetres.",
+                "type": [
+                  "string",
+                  "number"
+                ],
+                "description": "Box width along the y axis as a Fusion expression, or a bare number in this tool's units (default cm).",
                 "examples": [
-                  2.0
+                  2.0,
+                  "20 mm"
                 ]
               },
               "height": {
-                "type": "number",
-                "minimum": 1e-09,
-                "maximum": 1000000000000.0,
-                "description": "Box or cylinder height along the z axis in centimetres.",
+                "type": [
+                  "string",
+                  "number"
+                ],
+                "description": "Box or cylinder height along the z axis as a Fusion expression, or a bare number in this tool's units (default cm).",
                 "examples": [
-                  3.0
+                  3.0,
+                  "30 mm"
                 ]
               },
               "radius": {
-                "type": "number",
-                "minimum": 1e-09,
-                "maximum": 1000000000000.0,
-                "description": "Cylinder or sphere radius in centimetres.",
+                "type": [
+                  "string",
+                  "number"
+                ],
+                "description": "Cylinder or sphere radius as a Fusion expression, or a bare number in this tool's units (default cm).",
                 "examples": [
-                  1.0
+                  1.0,
+                  "5 mm"
                 ]
               }
             },
@@ -1414,6 +1541,19 @@
             "description": "Optional body name; Fusion assigns one when omitted.",
             "examples": [
               "Housing"
+            ]
+          },
+          "units": {
+            "type": "string",
+            "enum": [
+              "mm",
+              "cm",
+              "in",
+              "m"
+            ],
+            "description": "Unit for every bare number in this call; expression strings carry their own unit and are never rescaled. Default is cm.",
+            "examples": [
+              "mm"
             ]
           }
         },

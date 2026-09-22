@@ -96,6 +96,27 @@ EXPORT_FORMATS = ["step", "stl", "f3d", "iges", "obj", "pdf"]
 STL_DENSITY = ["low", "medium", "high"]
 STL_UNITS = ["mm", "cm", "in", "m"]
 
+# The unit a tool's bare numbers are stated in.  Mirrors the conversion table
+# in value_builders.CM_PER_UNIT — the drift guard pins the bridge copy of this
+# enum, and tool_surface cannot import that module (it must stay pure-data so
+# the contract generator can import it outside Fusion), so the two are held in
+# sync by tests/tools/test_units.py.
+LENGTH_UNITS = ["mm", "cm", "in", "m"]
+
+# A reusable "units" property: every dimension-bearing tool carries it.  Bare
+# numbers in that call are read in this unit; expression strings carry their
+# own unit and are never rescaled.  Defaults to centimetres, the API's internal
+# unit, so a call that omits it behaves exactly as before.
+UNITS_PROPERTY = {
+    "type": "string",
+    "enum": LENGTH_UNITS,
+    "description": (
+        "Unit for every bare number in this call; expression strings carry their "
+        "own unit and are never rescaled. Default is cm."
+    ),
+    "examples": ["mm"],
+}
+
 # ── Wave 3b shared enums ───────────────────────────────────────────────────
 # Sketch geometry lives on one of the three base construction planes.  An
 # extrude combines its new geometry with existing bodies and sweeps it by a
@@ -127,6 +148,30 @@ POINT_SCHEMA = {
     "required": ["x", "y", "z"],
     "additionalProperties": False,
 }
+# Geometry points on sketch curves: like POINT_SCHEMA, but each component may be
+# a bare number in the tool's units or a Fusion expression string.  CAMERA_SCHEMA
+# keeps the plain POINT_SCHEMA: camera coordinates are not physical dimensions
+# and never carry units.
+CURVE_POINT_SCHEMA = {
+    "type": "object",
+    "description": (
+        "A 3D point on a sketch curve; each component is a bare number in the "
+        "tool's units (default cm) or a Fusion expression string."
+    ),
+    "properties": {
+        axis: {
+            "type": ["string", "number"],
+            "description": (
+                f"{axis.upper()} component; a bare number is this tool's "
+                "units (default cm), or a Fusion expression."
+            ),
+        }
+        for axis in ("x", "y", "z")
+    },
+    "required": ["x", "y", "z"],
+    "additionalProperties": False,
+}
+
 # The three curve variants share one object schema discriminated by ``kind``.
 # The owned validator's vocabulary has no ``oneOf``; the per-variant required
 # members are enforced by the handler, which reports them as invalid_value.
@@ -143,15 +188,13 @@ CURVE_SCHEMA = {
             "enum": ["line", "circle", "arc"],
             "description": "Which curve this is, and which members are required.",
         },
-        "start": POINT_SCHEMA,
-        "end": POINT_SCHEMA,
-        "center": POINT_SCHEMA,
+        "start": CURVE_POINT_SCHEMA,
+        "end": CURVE_POINT_SCHEMA,
+        "center": CURVE_POINT_SCHEMA,
         "radius": {
-            "type": "number",
-            "minimum": 1e-9,
-            "maximum": 1e12,
-            "description": "Circle radius in centimetres.",
-            "examples": [1.0],
+            "type": ["string", "number"],
+            "description": "Circle radius as a Fusion expression, or a bare number in this tool's units (default cm).",
+            "examples": [1.0, "5 mm"],
         },
         "sweep": {
             "type": "number",
@@ -176,32 +219,36 @@ DIMENSIONS_SCHEMA = {
     ),
     "properties": {
         "length": {
-            "type": "number",
-            "minimum": 1e-9,
-            "maximum": 1e12,
-            "description": "Box length along the x axis in centimetres.",
-            "examples": [2.0],
+            "type": ["string", "number"],
+            "description": (
+                "Box length along the x axis as a Fusion expression, or a bare "
+                "number in this tool's units (default cm)."
+            ),
+            "examples": [2.0, "20 mm"],
         },
         "width": {
-            "type": "number",
-            "minimum": 1e-9,
-            "maximum": 1e12,
-            "description": "Box width along the y axis in centimetres.",
-            "examples": [2.0],
+            "type": ["string", "number"],
+            "description": (
+                "Box width along the y axis as a Fusion expression, or a bare "
+                "number in this tool's units (default cm)."
+            ),
+            "examples": [2.0, "20 mm"],
         },
         "height": {
-            "type": "number",
-            "minimum": 1e-9,
-            "maximum": 1e12,
-            "description": "Box or cylinder height along the z axis in centimetres.",
-            "examples": [3.0],
+            "type": ["string", "number"],
+            "description": (
+                "Box or cylinder height along the z axis as a Fusion expression, "
+                "or a bare number in this tool's units (default cm)."
+            ),
+            "examples": [3.0, "30 mm"],
         },
         "radius": {
-            "type": "number",
-            "minimum": 1e-9,
-            "maximum": 1e12,
-            "description": "Cylinder or sphere radius in centimetres.",
-            "examples": [1.0],
+            "type": ["string", "number"],
+            "description": (
+                "Cylinder or sphere radius as a Fusion expression, or a bare "
+                "number in this tool's units (default cm)."
+            ),
+            "examples": [1.0, "5 mm"],
         },
     },
     "additionalProperties": False,
@@ -817,14 +864,18 @@ TOOL_DEFINITIONS = [
                     "examples": [["$selection_0", "$selection_1"]],
                 },
                 "radius": {
-                    "type": "string",
-                    "description": "Fillet radius as a Fusion expression; a bare number is centimetres.",
+                    "type": ["string", "number"],
+                    "description": (
+                        "Fillet radius as a Fusion expression, or a bare number in this "
+                        "tool's units (default cm)."
+                    ),
                     "examples": ["5 mm", "0.25 in"],
                 },
                 "is_tangent_chain": {
                     "type": "boolean",
                     "description": "Also fillet edges tangentially connected to the input edges (default: true).",
                 },
+                "units": UNITS_PROPERTY,
             },
             "required": ["edges", "radius"],
         },
@@ -849,10 +900,14 @@ TOOL_DEFINITIONS = [
                     "examples": [["$selection_0"]],
                 },
                 "distance": {
-                    "type": "string",
-                    "description": "Chamfer offset distance as a Fusion expression; a bare number is centimetres.",
+                    "type": ["string", "number"],
+                    "description": (
+                        "Chamfer offset distance as a Fusion expression, or a bare "
+                        "number in this tool's units (default cm); offsets both sides equally."
+                    ),
                     "examples": ["2 mm", "0.1 in"],
                 },
+                "units": UNITS_PROPERTY,
             },
             "required": ["edges", "distance"],
         },
@@ -880,16 +935,38 @@ TOOL_DEFINITIONS = [
                     "type": "object",
                     "description": "Hole centre as a 3D point in centimetres, dropped onto the face along its normal.",
                     "properties": {
-                        "x": {"type": "number", "description": "X coordinate in centimetres."},
-                        "y": {"type": "number", "description": "Y coordinate in centimetres."},
-                        "z": {"type": "number", "description": "Z coordinate in centimetres."},
+                        "x": {
+                            "type": ["string", "number"],
+                            "description": (
+                                "X coordinate; a bare number is this tool's "
+                                "units (default cm), or a Fusion expression."
+                            ),
+                        },
+                        "y": {
+                            "type": ["string", "number"],
+                            "description": (
+                                "Y coordinate; a bare number is this tool's "
+                                "units (default cm), or a Fusion expression."
+                            ),
+                        },
+                        "z": {
+                            "type": ["string", "number"],
+                            "description": (
+                                "Z coordinate; a bare number is this tool's "
+                                "units (default cm), or a Fusion expression."
+                            ),
+                        },
                     },
+
                     "required": ["x", "y", "z"],
                     "additionalProperties": False,
                 },
                 "diameter": {
-                    "type": "string",
-                    "description": "Hole diameter as a Fusion expression; a bare number is centimetres.",
+                    "type": ["string", "number"],
+                    "description": (
+                        "Hole diameter as a Fusion expression, or a bare "
+                        "number in this tool's units (default cm)."
+                    ),
                     "examples": ["8 mm", "0.25 in"],
                 },
                 "extent": {
@@ -898,8 +975,12 @@ TOOL_DEFINITIONS = [
                     "description": "Hole extent: a fixed distance (needs depth) or through-all (default: distance).",
                 },
                 "depth": {
-                    "type": "string",
-                    "description": "Hole depth as a Fusion expression; required for extent=distance, else ignored.",
+                    "type": ["string", "number"],
+                    "description": (
+                        "Hole depth as a Fusion expression, or a bare number in "
+                        "this tool's units (default cm); required for extent=distance, "
+                        "else ignored."
+                    ),
                     "examples": ["10 mm"],
                 },
                 "direction": {
@@ -907,6 +988,7 @@ TOOL_DEFINITIONS = [
                     "enum": ["positive", "negative"],
                     "description": "Which way the hole runs off the face normal (default: positive).",
                 },
+                "units": UNITS_PROPERTY,
             },
             "required": ["face", "position", "diameter"],
         },
@@ -942,8 +1024,11 @@ TOOL_DEFINITIONS = [
                     "examples": [3],
                 },
                 "distance_one": {
-                    "type": "string",
-                    "description": "First-direction spacing as a Fusion expression; a bare number is centimetres.",
+                    "type": ["string", "number"],
+                    "description": (
+                        "First-direction spacing as a Fusion expression, or a bare "
+                        "number in this tool's units (default cm)."
+                    ),
                     "examples": ["20 mm"],
                 },
                 "direction_two": {
@@ -957,14 +1042,18 @@ TOOL_DEFINITIONS = [
                     "examples": [2],
                 },
                 "distance_two": {
-                    "type": "string",
-                    "description": "Second-direction spacing as a Fusion expression; a bare number is centimetres.",
+                    "type": ["string", "number"],
+                    "description": (
+                        "Second-direction spacing as a Fusion expression, or a bare "
+                        "number in this tool's units (default cm)."
+                    ),
                     "examples": ["15 mm"],
                 },
                 "is_symmetric": {
                     "type": "boolean",
                     "description": "Distribute instances symmetrically about the seed (default: false).",
                 },
+                "units": UNITS_PROPERTY,
             },
             "required": ["entities", "direction_one", "quantity_one", "distance_one"],
         },
@@ -1052,6 +1141,7 @@ TOOL_DEFINITIONS = [
                         ]
                     ],
                 },
+                "units": UNITS_PROPERTY,
             },
             "required": ["plane", "curves"],
         },
@@ -1088,13 +1178,15 @@ TOOL_DEFINITIONS = [
                     "description": "Extrude extent: distance, through all geometry, or symmetric (default: distance).",
                 },
                 "distance": {
-                    "type": "string",
+                    "type": ["string", "number"],
                     "description": (
-                        "Extrude distance as a Fusion expression; a bare number is "
-                        "centimetres. Required for extent distance and symmetric."
+                        "Extrude distance as a Fusion expression, or a bare number "
+                        "in this tool's units (default cm). Required for extent distance "
+                        "and symmetric."
                     ),
-                    "examples": ["10 mm", 2.5],
+                    "examples": ["10 mm", "2.5 cm"],
                 },
+                "units": UNITS_PROPERTY,
                 "direction": {
                     "type": "string",
                     "enum": DIRECTIONS,
@@ -1195,6 +1287,7 @@ TOOL_DEFINITIONS = [
                     "description": "Optional body name; Fusion assigns one when omitted.",
                     "examples": ["Housing"],
                 },
+                "units": UNITS_PROPERTY,
             },
             "required": ["shape", "dimensions"],
         },
